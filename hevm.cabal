@@ -231,7 +231,7 @@ executable hevm
     vector,
     vty
   if os(windows)
-    buildable: false
+    buildable: False
 
 common test-base
   import: shared
@@ -286,7 +286,7 @@ library test-utils
   exposed-modules:
     EVM.TestUtils
   if os(windows)
-    buildable: false
+    buildable: False
 
 common test-common
   import:
@@ -296,7 +296,7 @@ common test-common
   other-modules:
     EVM.TestUtils
   if os(windows)
-    buildable: false
+    buildable: False
   if os(darwin)
     extra-libraries: c++
     -- https://gitlab.haskell.org/ghc/ghc/-/issues/11829
