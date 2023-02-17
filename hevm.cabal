@@ -115,7 +115,7 @@ library
   if os(linux) || os(windows)
     extra-libraries: stdc++
   extra-libraries:
-    secp256k1, ff
+    secp256k1, ff, gmp
   c-sources:
     ethjet/tinykeccak.c, ethjet/ethjet.c
   cxx-sources:
