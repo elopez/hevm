@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- The `hevm` library can now be built on Windows systems.
+
+## [0.50.3] - 2023-02-17
+
 ### Fixed
 
 - `hevm symbolic` exits with status code `1` if counterexamples or timeouts are found
@@ -17,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved equivalence checker that avoids checking similar branches more than once.
 - Improved simplification for arithmetic expressions
 - Construction of storage counterexamples based on the model returned by the SMT solver.
+- Static binaries for macos
 
 ## [0.50.2] - 2023-01-06
 
