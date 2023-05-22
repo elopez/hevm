@@ -23,6 +23,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - uses: cachix/install-nix-action@v20
         with:
           nix_path: nixpkgs=channel:nixos-unstable
@@ -54,6 +56,8 @@ jobs:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -76,6 +80,9 @@ jobs:
         id: cabal
         with:
           ghc-version: '9.2'
+      - run: |
+          cd network
+          autoreconf -i
       - name: run cabal check
         run: cabal check --verbose=3
       - name: build and install dependencies
