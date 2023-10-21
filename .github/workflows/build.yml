@@ -53,6 +53,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
+          release: false
           path-type: inherit
           update: true
           install: >-
@@ -112,7 +113,7 @@ jobs:
       - name: build hevm library
         run: |
           cabal build --extra-include-dirs="$HOME/.local/include" --extra-lib-dirs="$HOME/.local/lib" \
-                      --extra-include-dirs="D:/a/_temp/msys64/mingw64/include" --extra-lib-dirs="D:/a/_temp/msys64/mingw64/lib"
+                      --extra-include-dirs="C:/msys64/mingw64/include" --extra-lib-dirs="C:/msys64/mingw64/lib"
 
   cabal-check:
     runs-on: ubuntu-latest
