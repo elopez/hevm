@@ -96,6 +96,7 @@
                 "--extra-lib-dirs=${zlib.static}/lib"
                 "--extra-lib-dirs=${stripDylib (libffi.overrideAttrs (_: { dontDisableStatic = true; }))}/lib"
                 "--extra-lib-dirs=${stripDylib (ncurses.override { enableStatic = true; })}/lib"
+                "--extra-lib-dirs=${stripDylib (libcxxabi)}/lib"
                 "--ghc-options=-pgml=${ccWorkaroundNix23138}/bin/cc-workaround-nix-23138"
               ]))
             haskell.lib.dontHaddock
@@ -139,8 +140,8 @@
           libs=$(${otool} -L $out/bin/hevm | tail -n +2 | sed 's/^[[:space:]]*//' | cut -d' ' -f1)
 
           # get the paths for libcxx and libiconv
-          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*-libcxx')
-          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*-libiconv')
+          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*-libcxx-')
+          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*-libiconv-')
 
           # rewrite /nix/... library paths to point to /usr/lib
           chmod 777 $out/bin/hevm
