@@ -43,6 +43,18 @@
           foundry.defaultPackage.${system}
         ];
 
+        ccWorkaroundNix23138 = pkgs.stdenv.mkDerivation rec {
+          name = "ccWorkaroundNix23138";
+          src = builtins.path {
+            path = ./.;
+          };
+          installPhase = ''
+            mkdir -p $out/bin
+            cp $src/cc-workaround-nix-23138.sh $out/bin/cc-workaround-nix-23138
+            chmod +x $out/bin/cc-workaround-nix-23138
+          '';
+        };
+
         # custom package set capable of building latest (unreleased) `cabal-install`.
         # This gives us support for multiple home units in cabal repl
         cabal-multi-pkgs = pkgs.haskellPackages.override {
@@ -84,6 +96,7 @@
                 "--extra-lib-dirs=${zlib.static}/lib"
                 "--extra-lib-dirs=${stripDylib (libffi.overrideAttrs (_: { dontDisableStatic = true; }))}/lib"
                 "--extra-lib-dirs=${stripDylib (ncurses.override { enableStatic = true; })}/lib"
+                "--ghc-options=-pgml=${ccWorkaroundNix23138}/bin/cc-workaround-nix-23138"
               ]))
             haskell.lib.dontHaddock
           ]).overrideAttrs(final: prev: {
@@ -189,6 +202,7 @@
             LD_LIBRARY_PATH = libraryPath;
             shellHook = lib.optionalString stdenv.isDarwin ''
               export DYLD_LIBRARY_PATH="${libraryPath}";
+              cabal configure --ghc-options=-pgml=${ccWorkaroundNix23138}/bin/cc-workaround-nix-23138
             '';
           };
       }

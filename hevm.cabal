@@ -108,11 +108,7 @@ library
     Paths_hevm
   autogen-modules:
     Paths_hevm
-  if os(linux)
-    build-depends: system-cxx-std-lib
-    extra-libraries: stdc++
   if os(darwin)
-    extra-libraries: c++
     -- https://gitlab.haskell.org/ghc/ghc/-/issues/11829
     ld-options: -Wl,-keep_dwarf_unwind
     ghc-options: -fcompact-unwind
@@ -127,6 +123,7 @@ library
   install-includes:
     ethjet/tinykeccak.h, ethjet/ethjet.h, ethjet/ethjet-ff.h, ethjet/blake2.h
   build-depends:
+    system-cxx-std-lib                >= 1.0,
     QuickCheck                        >= 2.13.2 && < 2.15,
     quickcheck-text                   >= 0.1.2 && < 0.2,
     Decimal                           >= 0.5.1 && < 0.6,
@@ -291,8 +288,6 @@ common test-common
     EVM.Test.BlockchainTests
   if os(windows)
     buildable: False
-  if os(darwin)
-    extra-libraries: c++
 
 --- Test Suites ---
 
@@ -334,8 +329,6 @@ benchmark bench
     bench
   ghc-options:
     -O2
-  if os(darwin)
-    extra-libraries: c++
   other-modules:
     Paths_hevm
   autogen-modules:
