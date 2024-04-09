@@ -232,8 +232,6 @@ executable hevm
     witch,
     unliftio-core,
     with-utf8                     >= 1.0.0.0
-  if os(windows)
-    buildable: False
 
 --- Test Helpers ---
 
@@ -294,8 +292,6 @@ library test-utils
     EVM.Test.Utils
     EVM.Test.Tracing
     EVM.Test.BlockchainTests
-  if os(windows)
-    buildable: False
 
 common test-common
   import:
@@ -308,8 +304,6 @@ common test-common
     EVM.Test.Utils
     EVM.Test.Tracing
     EVM.Test.BlockchainTests
-  if os(windows)
-    buildable: False
   if os(darwin)
     extra-libraries: c++
 
