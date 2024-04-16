@@ -78,6 +78,7 @@ jobs:
             openssl-devel
             git
             unzip
+            bash
           pacboy: >-
             cmake:p
             ninja:p
