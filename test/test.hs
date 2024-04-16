@@ -3481,7 +3481,15 @@ tests = testGroup "hevm"
                     -- TODO check what's wrong with these!
                     , "loadResolver/keccak_short.yul" -- ACTUAL bug -- keccak
                     , "reasoningBasedSimplifier/signed_division.yul" -- ACTUAL bug, SDIV
-                    ]
+                    ] ++ (if os == "mingw32" then
+                    -- TODO check what's wrong with these, they hang/run OOM on Windows
+                    [ "conditionalSimplifier/side_effects_of_functions.yul"
+                    , "conditionalUnsimplifier/side_effects_of_functions.yul"
+                    , "expressionInliner/double_recursive_calls.yul"
+                    , "fullInliner/multi_fun_callback.yul" -- observed OOM
+                    , "unusedStoreEliminator/function_side_effects_2.yul"
+                    , "unusedStoreEliminator/write_before_recursion.yul"
+                    ] else [])
 
         solcRepo <- liftIO $ fromMaybe (internalError "cannot find solidity repo") <$> (lookupEnv "HEVM_SOLIDITY_REPO")
         let testDir = solcRepo <> "/test/libyul/yulOptimizerTests"
