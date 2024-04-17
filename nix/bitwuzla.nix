@@ -17,13 +17,13 @@
 
 stdenv.mkDerivation rec {
   pname = "bitwuzla";
-  version = "0.3.0";
+  version = "0.4.0";
 
   src = fetchFromGitHub {
     owner = "bitwuzla";
     repo = "bitwuzla";
-    rev = "c8b2c13924bbf80f75a29047e18873a5897f6b26";
-    hash = "sha256-ASIF2Ov1RJcxueALHorMuGibd2qTpAj1fziq0QFVfNk=";
+    rev = "bfc680c852cea3bd739b2e3b319759df3205c88c";
+    hash = "sha256-ZEdV4ml1LwrYwscgOcL2gLx/ijPYqRktXMQH/Njh8OI=";
   };
 
   nativeBuildInputs = [ python3 meson ninja pkg-config git gtest ];
