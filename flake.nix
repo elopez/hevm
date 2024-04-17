@@ -30,7 +30,27 @@
   outputs = { self, nixpkgs, flake-utils, solidity, forge-std, ethereum-tests, foundry, cabal-head, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = (import nixpkgs { inherit system; config = { allowBroken = true; }; });
+        pkgs = (import nixpkgs {
+          inherit system;
+          config = {
+            allowBroken = true;
+            packageOverrides = pkgs: {
+              haskellPackages = pkgs.haskellPackages.override {
+                overrides = self: super: {
+                  # See https://github.com/NixOS/nixpkgs/blob/4ebca4f72e149f48527f50e2d0c266206b84851e/pkgs/development/haskell-modules/configuration-darwin.nix#L85-L101
+                  crypton-x509-system = if pkgs.stdenv.isDarwin then
+                    pkgs.haskell.lib.compose.overrideCabal (drv:
+                    {
+                      postPatch = ''
+                        substituteInPlace System/X509/MacOS.hs --replace security /usr/bin/security
+                      '' + (drv.postPatch or "");
+                    }) super.crypton-x509-system
+                    else super.crypton-x509-system;
+                };
+              };
+            };
+          };
+        });
         bitwuzla = pkgs.callPackage (import ./nix/bitwuzla.nix) {};
         testDeps = with pkgs; [
           go-ethereum
