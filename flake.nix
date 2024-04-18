@@ -34,9 +34,13 @@
           inherit system;
           config = {
             allowBroken = true;
+            doCheckByDefault = false;
             packageOverrides = pkgs: {
               haskellPackages = pkgs.haskellPackages.override {
                 overrides = self: super: {
+                  #mkDerivation = args: super.mkDerivation (args // {
+                  #  enableLibraryProfiling = false;
+                  #});
                   # See https://github.com/NixOS/nixpkgs/blob/4ebca4f72e149f48527f50e2d0c266206b84851e/pkgs/development/haskell-modules/configuration-darwin.nix#L85-L101
                   crypton-x509-system = if pkgs.stdenv.isDarwin then
                     pkgs.haskell.lib.compose.overrideCabal (drv:
