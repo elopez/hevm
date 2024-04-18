@@ -32,30 +32,14 @@
       let
         pkgs = (import nixpkgs {
           inherit system;
-          config = {
-            allowBroken = true;
-            doCheckByDefault = false;
-            packageOverrides = pkgs: {
-              haskellPackages = pkgs.haskellPackages.override {
-                overrides = self: super: {
-                  #mkDerivation = args: super.mkDerivation (args // {
-                  #  enableLibraryProfiling = false;
-                  #});
-                  # See https://github.com/NixOS/nixpkgs/blob/4ebca4f72e149f48527f50e2d0c266206b84851e/pkgs/development/haskell-modules/configuration-darwin.nix#L85-L101
-                  crypton-x509-system = if pkgs.stdenv.isDarwin then
-                    pkgs.haskell.lib.compose.overrideCabal (drv:
-                    {
-                      postPatch = ''
-                        substituteInPlace System/X509/MacOS.hs --replace security /usr/bin/security
-                      '' + (drv.postPatch or "");
-                    }) super.crypton-x509-system
-                    else super.crypton-x509-system;
-                };
-              };
-            };
-          };
         });
         bitwuzla = pkgs.callPackage (import ./nix/bitwuzla.nix) {};
+
+        security-tool =
+          # make `/usr/bin/security` available in `PATH`, which is needed for stack
+          # on darwin which calls this binary to find certificates
+          pkgs.writeScriptBin "security" ''exec /usr/bin/security "$@"'';
+
         testDeps = with pkgs; [
           go-ethereum
           solc
@@ -64,7 +48,7 @@
           git
           bitwuzla
           foundry.defaultPackage.${system}
-        ];
+        ] ++ lib.optional stdenv.isDarwin security-tool;
 
         ccWorkaroundNix23138 = pkgs.stdenv.mkDerivation rec {
           name = "ccWorkaroundNix23138";
