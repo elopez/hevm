@@ -85,11 +85,11 @@
     "forge-std": {
       "flake": false,
       "locked": {
-        "lastModified": 1710711594,
-        "narHash": "sha256-s/J7odpWysj4U93knIRA28aZqXworZH6IVIjIXD78Yc=",
+        "lastModified": 1709159040,
+        "narHash": "sha256-GZlyyJQbMP9VVGz45nQl8eLd+nknspe94M/hjTf8bhM=",
         "owner": "foundry-rs",
         "repo": "forge-std",
-        "rev": "bb4ceea94d6f10eeb5b41dc2391c6c8bf8e734ef",
+        "rev": "2f6762e4f73f3d835457c220b5f62dfeeb6f6341",
         "type": "github"
       },
       "original": {
