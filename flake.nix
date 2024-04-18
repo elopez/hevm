@@ -81,7 +81,7 @@
           configureFlags = attrs.configureFlags ++ [ "--enable-static" ];
         }));
 
-        hevmUnwrapped = (with (if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsStatic); lib.pipe (
+        hevmUnwrapped' = (pkgs: (with pkgs; lib.pipe (
           haskellPackages.callCabal2nix "hevm" ./. {
             # Haskell libs with the same names as C libs...
             # Depend on the C libs, not the Haskell libs.
@@ -97,7 +97,7 @@
                 "-O2"
               ]
               ++ lib.optionals stdenv.isDarwin
-              [ "--extra-lib-dirs=${stripDylib (pkgs.gmp.override { withStatic = true; })}/lib"
+              [ "--extra-lib-dirs=${stripDylib (gmp.override { withStatic = true; })}/lib"
                 "--extra-lib-dirs=${stripDylib secp256k1-static}/lib"
                 "--extra-lib-dirs=${stripDylib (libff.override { enableStatic = true; })}/lib"
                 "--extra-lib-dirs=${zlib.static}/lib"
@@ -111,7 +111,9 @@
             HEVM_ETHEREUM_TESTS_REPO = ethereum-tests;
             HEVM_FORGE_STD_REPO = forge-std;
             DAPP_SOLC = "${pkgs.solc}/bin/solc";
-          });
+          }));
+
+        hevmUnwrapped = hevmUnwrapped' pkgs;
 
         # wrapped binary for use on systems with nix available. ensures all
         # required runtime deps are available and on path
@@ -137,7 +139,7 @@
           codesign_allocate = "${pkgs.darwin.binutils.bintools}/bin/codesign_allocate";
           codesign = "${pkgs.darwin.sigtool}/bin/codesign";
         in if pkgs.stdenv.isLinux
-        then pkgs.haskell.lib.dontCheck hevmUnwrapped
+        then pkgs.haskell.lib.dontCheck (hevmUnwrapped' pkgs.pkgsStatic)
         else pkgs.runCommand "stripNixRefs" {} ''
           mkdir -p $out/bin
           cp ${pkgs.haskell.lib.dontCheck hevmUnwrapped}/bin/hevm $out/bin/
