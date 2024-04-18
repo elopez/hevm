@@ -103,7 +103,6 @@
                 "--extra-lib-dirs=${zlib.static}/lib"
                 "--extra-lib-dirs=${stripDylib (libffi.overrideAttrs (_: { dontDisableStatic = true; }))}/lib"
                 "--extra-lib-dirs=${stripDylib (ncurses.override { enableStatic = true; })}/lib"
-                "--extra-lib-dirs=${stripDylib (libcxxabi)}/lib"
                 "--ghc-options=-pgml=${ccWorkaroundNix23138}/bin/cc-workaround-nix-23138"
               ]))
             haskell.lib.dontHaddock

@@ -51,7 +51,7 @@ stdenv.mkDerivation rec {
     Name: symfpu
     Version: 0.0.1
     Description: symfpu
-    Cflags: -I${symfpu}
+    Cflags: -I${symfpu}/include
   '';
 
   configurePhase = ''
