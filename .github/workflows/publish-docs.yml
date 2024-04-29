@@ -3,7 +3,7 @@ name: Publish Documentation
 on:
   push:
     branches:
-      - main
+      - echidna-patches
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
