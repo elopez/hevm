@@ -4,7 +4,7 @@
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    foundry.url = "github:shazow/foundry.nix/6089aad0ef615ac8c7b0c948d6052fa848c99523";
+    foundry.url = "github:shazow/foundry.nix/49efa2bbb4a663997107cdc30820f9d95f06d5b9";
     flake-compat = {
       url = "github:edolstra/flake-compat";
       flake = false;
@@ -30,8 +30,16 @@
   outputs = { self, nixpkgs, flake-utils, solidity, forge-std, ethereum-tests, foundry, cabal-head, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = (import nixpkgs { inherit system; config = { allowBroken = true; }; });
+        pkgs = (import nixpkgs {
+          inherit system;
+        });
         bitwuzla = pkgs.callPackage (import ./nix/bitwuzla.nix) {};
+
+        security-tool =
+          # make `/usr/bin/security` available in `PATH`, which is needed for stack
+          # on darwin which calls this binary to find certificates
+          pkgs.writeScriptBin "security" ''exec /usr/bin/security "$@"'';
+
         testDeps = with pkgs; [
           go-ethereum
           solc
@@ -61,7 +69,7 @@
           configureFlags = attrs.configureFlags ++ [ "--enable-static" ];
         }));
 
-        hevmUnwrapped = (with (if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsStatic); lib.pipe (
+        hevmUnwrapped' = (pkgs: (with pkgs; lib.pipe (
           haskellPackages.callCabal2nix "hevm" ./. {
             # Haskell libs with the same names as C libs...
             # Depend on the C libs, not the Haskell libs.
@@ -77,12 +85,13 @@
                 "-O2"
               ]
               ++ lib.optionals stdenv.isDarwin
-              [ "--extra-lib-dirs=${stripDylib (pkgs.gmp.override { withStatic = true; })}/lib"
+              [ "--extra-lib-dirs=${stripDylib (gmp.override { withStatic = true; })}/lib"
                 "--extra-lib-dirs=${stripDylib secp256k1-static}/lib"
                 "--extra-lib-dirs=${stripDylib (libff.override { enableStatic = true; })}/lib"
                 "--extra-lib-dirs=${zlib.static}/lib"
                 "--extra-lib-dirs=${stripDylib (libffi.overrideAttrs (_: { dontDisableStatic = true; }))}/lib"
                 "--extra-lib-dirs=${stripDylib (ncurses.override { enableStatic = true; })}/lib"
+                "--ghc-options=-pgml=${cc-workaround-nix-23138}/bin/cc-workaround-nix-23138"
               ]))
             haskell.lib.dontHaddock
           ]).overrideAttrs(final: prev: {
@@ -90,7 +99,9 @@
             HEVM_ETHEREUM_TESTS_REPO = ethereum-tests;
             HEVM_FORGE_STD_REPO = forge-std;
             DAPP_SOLC = "${pkgs.solc}/bin/solc";
-          });
+          }));
+
+        hevmUnwrapped = hevmUnwrapped' pkgs;
 
         # wrapped binary for use on systems with nix available. ensures all
         # required runtime deps are available and on path
@@ -116,7 +127,7 @@
           codesign_allocate = "${pkgs.darwin.binutils.bintools}/bin/codesign_allocate";
           codesign = "${pkgs.darwin.sigtool}/bin/codesign";
         in if pkgs.stdenv.isLinux
-        then pkgs.haskell.lib.dontCheck hevmUnwrapped
+        then pkgs.haskell.lib.dontCheck (hevmUnwrapped' pkgs.pkgsStatic)
         else pkgs.runCommand "stripNixRefs" {} ''
           mkdir -p $out/bin
           cp ${pkgs.haskell.lib.dontCheck hevmUnwrapped}/bin/hevm $out/bin/
@@ -125,8 +136,8 @@
           libs=$(${otool} -L $out/bin/hevm | tail -n +2 | sed 's/^[[:space:]]*//' | cut -d' ' -f1)
 
           # get the paths for libcxx and libiconv
-          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*-libcxx')
-          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*-libiconv')
+          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*-libcxx-')
+          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*-libiconv-')
 
           # rewrite /nix/... library paths to point to /usr/lib
           chmod 777 $out/bin/hevm
@@ -188,6 +199,7 @@
             LD_LIBRARY_PATH = libraryPath;
             shellHook = lib.optionalString stdenv.isDarwin ''
               export DYLD_LIBRARY_PATH="${libraryPath}";
+              cabal configure --ghc-options=-pgml=${cc-workaround-nix-23138}/bin/cc-workaround-nix-23138
             '';
           };
       }
