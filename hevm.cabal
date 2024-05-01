@@ -61,6 +61,7 @@ common shared
     -optc-Wno-ignored-attributes
     -fspecialize-aggressively
     -fexpose-all-unfoldings
+    -feager-blackholing
   default-language: GHC2021
   default-extensions:
     DuplicateRecordFields
