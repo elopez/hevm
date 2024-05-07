@@ -406,7 +406,9 @@ getTraceOutput evmtoolResult =
       case exitcode of
         ExitSuccess -> JSON.decodeFileStrict (traceFileName ++ ".json") :: IO (Maybe EVMToolTraceOutput)
         _ -> do
-          putStrLn $ "Error converting trace! exit" <> (show exitcode) <> "stdout " <> (show stdout) <> " stderr " <> (show stderr)
+          putStrLn $ "Error converting trace! exit code:" <> (show exitcode)
+          putStrLn $ "stdout: " <> (show stdout)
+          putStrLn $ "stderr: " <> (show stderr)
           pure Nothing
 
 deleteTraceOutputFiles :: Maybe EVMToolResult -> IO ()
