@@ -122,7 +122,7 @@ library
   extra-libraries:
     secp256k1, ff, gmp
   c-sources:
-    ethjet/tinykeccak.c, ethjet/blake2.c, ethjet/ethjet.c
+    ethjet/tinykeccak.c, ethjet/blake2.c, ethjet/ethjet.c, ethjet/bn256/ate_optate.c, ethjet/bn256/comfp12e.c, ethjet/bn256/curve.c, ethjet/bn256/curvepoint_fp.c, ethjet/bn256/fp.c, ethjet/bn256/fp12.c, ethjet/bn256/fp12e.c, ethjet/bn256/fp2.c, ethjet/bn256/fp2e.c, ethjet/bn256/fp6.c, ethjet/bn256/fp6e.c, ethjet/bn256/fpe.c, ethjet/bn256/init.c, ethjet/bn256/points.c, ethjet/bn256/randompoints.c, ethjet/bn256/twistpoint_fp2.c
   cxx-sources:
     ethjet/ethjet-ff.cc
   cxx-options:

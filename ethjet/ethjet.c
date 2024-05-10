@@ -3,6 +3,10 @@
 #include "tinykeccak.h"
 #include "blake2.h"
 
+#include "bn256/init.h"
+#include "bn256/curvepoint_fp.h"
+
+#include <gmp.h>
 #include <secp256k1_recovery.h>
 
 #include <stdlib.h>
@@ -112,6 +116,175 @@ int ethjet_blake2(uint8_t *in, size_t in_size,
   return 1;
 }
 
+  // for loading an element of F_q (a coordinate of G_1)
+  // consumes 32 bytes
+  int read_Fq_element_v2 (uint8_t *in, mpz_t x_data) {
+    mpz_init(x_data);
+    mpz_import(x_data, 32, 1, sizeof(in[0]), 1, 0, in);
+
+    // mpz_t q;
+    // mpz_init(q);
+    // alt_bn128_modulus_q.to_mpz(q);
+    // const mp_size_t limbs = alt_bn128_q_limbs;
+
+    // if (mpz_cmp(x_data, q) >= 0)
+    //   throw 0;
+    return 0;
+  }
+
+  // for loading an element of F_q (a coordinate of G_1)
+  // consumes 32 bytes
+  int write_Fq_element_v2 (uint8_t *out, mpz_t x_data) {
+    size_t x_size;
+    uint8_t *x_arr = (uint8_t *)mpz_export(NULL, &x_size, 1, 1, 1, 0, x_data);
+    if (x_size > 32) {
+      puts("ERR!!!");
+      return 0;
+    }
+    // copy the result to the output buffer
+    // with padding
+    for (size_t i = 1; i <= 32; i++) {
+      if (i <= x_size)
+        out[32-i] = x_arr[x_size-i];
+      else
+        out[32-i] = 0;
+    }
+    return 0; 
+  }
+
+  // for loading a point in G_1
+  // consumes 64 bytes
+  void read_G1_point_v2 (uint8_t *in, curvepoint_fp_t p) {
+    mpz_t ax, ay, az;
+    read_Fq_element_v2(in, ax);
+    read_Fq_element_v2(in+32, ay);
+
+    // create curve point from affine coordinates
+    // the point at infinity (0,0) is a special case
+    if (mpz_sgn(ax) == 0 && mpz_sgn(ay) == 0) {
+        //curvepoint_fp_init_set_str(p, "0", "1", "0");
+        curvepoint_fp_init(p); // initialize to infinity
+        puts("INF POINT:");
+        curvepoint_fp_print(stdout,p);
+    }
+    else {
+      mpz_init_set_ui(az, 1);
+      gmp_printf("READ X: %Zd \n", ax);
+      gmp_printf("READ Y: %Zd \n", ay);
+      gmp_printf("READ Z: %Zd \n", az);
+
+      curvepoint_fp_init_set_mpz(p, ax, ay, az);
+      puts("POINT:");
+      curvepoint_fp_print(stdout,p);
+    }
+  }
+
+  // writes a point of G1
+  // produces 64 bytes
+  void write_G1_point_v2(uint8_t *out, curvepoint_fp_t p) {
+    mpz_t x, y, z;
+    mpz_init(x);
+    mpz_init(y);
+    mpz_init(z);
+    
+    //curvepoint_fp_makeaffine(p);
+    puts("WRITING");
+    curvepoint_fp_print(stdout,p);
+    curvepoint_fp_get_mpz(p, x, y, z);
+
+    gmp_printf("WRITE X: %Zd \n", x);
+    gmp_printf("WRITE Y: %Zd \n", y);
+    gmp_printf("WRITE Z: %Zd \n", z);
+
+    if (!mpz_cmp_ui(x, 0) && !mpz_cmp_ui(y, 1) && !mpz_cmp_ui(z, 0)) {
+      puts("INF!");
+      mpz_set_ui(y, 0);
+    }
+
+    write_Fq_element_v2(out,    x);
+    write_Fq_element_v2(out+32, y);
+    return;
+  }
+
+int ethjet_ecadd_v2 (uint8_t *in, size_t in_size,
+                     uint8_t *out, size_t out_size) {
+  if (in_size != 128) {
+    return 0;
+  }
+  if (out_size != 64) {
+    return 0;
+  }
+
+  init_globals();
+
+  curvepoint_fp_t a;
+  curvepoint_fp_t b, c;
+  read_G1_point_v2(in, a);
+  read_G1_point_v2(in+64, b);
+
+  curvepoint_fp_makeaffine(a); 
+  curvepoint_fp_makeaffine(b);
+
+  if (!curvepoint_fp_well_formed(a) || !curvepoint_fp_well_formed(b))
+    return 0;
+
+  if (fpe_iszero(a->m_x) && fpe_isone(a->m_y) && fpe_iszero(a->m_z)) {
+    write_G1_point_v2(out, b);
+    return 1;
+  }
+
+  if (fpe_iszero(b->m_x) && fpe_isone(b->m_y) && fpe_iszero(b->m_z)) {
+    write_G1_point_v2(out, a);
+    return 1;
+  }
+
+  //puts("BEFORE");
+  //curvepoint_fp_print(stdout,c);
+
+// curvepoint_fp_makeaffine(a); 
+//   curvepoint_fp_makeaffine(b); 
+  curvepoint_fp_mixadd(b, a, b);
+  curvepoint_fp_makeaffine(b); 
+
+  write_G1_point_v2(out, b);
+
+  return 1;
+}
+
+    int
+  ethjet_ecmul_v2 (uint8_t *in, size_t in_size,
+                uint8_t *out, size_t out_size) {
+
+    if (in_size != 96) {
+      return 0;
+    }
+    if (out_size != 64) {
+      return 0;
+    }
+
+    
+    init_globals();
+
+    curvepoint_fp_t a;
+   // curvepoint_fp_t ;
+    read_G1_point_v2(in, a);
+    //read_G1_point_v2(in+64, b);
+    //curvepoint_fp_makeaffine(a);
+    //curvepoint_fp_makeaffine(b); 
+    //curvepoint_fp_mixadd(a, a, b);
+    curvepoint_fp_makeaffine(a);
+
+     //write_G1_point_v2(out, na);
+
+      // alt_bn128_G1 a = read_G1_point(in);
+      // alt_bn128_Fr n = read_Fr_element(in+64);
+      // alt_bn128_G1 na = n * a;
+
+      // write_G1_point(out, na);
+
+    return 1;
+  }
+
 int
 ethjet (struct ethjet_context *ctx,
         enum ethjet_operation op,
@@ -127,7 +300,7 @@ ethjet (struct ethjet_context *ctx,
     return ethjet_example (ctx, in, in_size, out, out_size);
 
   case ETHJET_ECADD:
-    return ethjet_ecadd (in, in_size, out, out_size);
+    return ethjet_ecadd_v2 (in, in_size, out, out_size);
 
   case ETHJET_ECMUL:
     return ethjet_ecmul (in, in_size, out, out_size);
