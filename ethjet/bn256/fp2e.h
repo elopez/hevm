@@ -38,6 +38,9 @@ void fp2e_setzero(fp2e_t rop);
 // Set an fp2e_t to value given in two strings
 void fp2e_set_str(fp2e_t rop, const char* a_str, const char* b_str);
 
+// Set an fp2e_t to value given in two mpz
+void fp2e_set_mpz(fp2e_t rop, const mpz_t a, const mpz_t b);
+
 // Double an fp2e:
 void fp2e_double(fp2e_t rop, const fp2e_t op);
 

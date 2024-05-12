@@ -6,6 +6,14 @@
 
 #include "twistpoint_fp2.h"
 
+void twistpoint_fp2_init(twistpoint_fp2_t rop)
+{
+	fp2e_setzero(rop->m_x);
+	fp2e_setone(rop->m_y);
+	fp2e_setzero(rop->m_z);
+  fp2e_setzero(rop->m_t);
+}
+
 void twistpoint_fp2_set(twistpoint_fp2_t rop, const twistpoint_fp2_t op)
 {
 	fp2e_set(rop->m_x, op->m_x);
@@ -28,6 +36,14 @@ void twistpoint_fp2_affineset_fp2e(twistpoint_fp2_t rop, const fp2e_t x, const f
 	fp2e_set(rop->m_y, y);
 	fp2e_setone(rop->m_z);
   fp2e_setzero(rop->m_t);
+}
+
+void twistpoint_fp2_affineset_mpz(twistpoint_fp2_t rop, const mpz_t x0, const mpz_t x1, const mpz_t y0, const mpz_t y1)
+{
+	fp2e_set_mpz(rop->m_x, x0, x1);
+	fp2e_set_mpz(rop->m_y, y0, y1);
+	fp2e_setone(rop->m_z);
+	fp2e_setzero(rop->m_t);
 }
 
 void twistpoint_fp2_mixadd(twistpoint_fp2_t rop, const twistpoint_fp2_t op1, const twistpoint_fp2_t op2)

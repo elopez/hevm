@@ -21,11 +21,15 @@ struct twistpoint_fp2_struct
 
 typedef twistpoint_fp2_struct_t twistpoint_fp2_t[1];
 
+void twistpoint_fp2_init(twistpoint_fp2_t rop);
+
 void twistpoint_fp2_set(twistpoint_fp2_t rop, const twistpoint_fp2_t op);
 
 void twistpoint_fp2_set_fp2e(twistpoint_fp2_t rop, const fp2e_t x, const fp2e_t y, const fp2e_t z);
 
 void twistpoint_fp2_affineset_fp2e(twistpoint_fp2_t rop, const fp2e_t x, const fp2e_t y);
+
+void twistpoint_fp2_affineset_mpz(twistpoint_fp2_t rop, const mpz_t x0, const mpz_t x1, const mpz_t y0, const mpz_t y1);
 
 void twistpoint_fp2_mixadd(twistpoint_fp2_t rop, const twistpoint_fp2_t op1, const twistpoint_fp2_t op2);
 

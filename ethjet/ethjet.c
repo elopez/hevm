@@ -5,6 +5,7 @@
 
 #include "bn256/init.h"
 #include "bn256/curvepoint_fp.h"
+#include "bn256/twistpoint_fp2.h"
 
 #include <gmp.h>
 #include <secp256k1_recovery.h>
@@ -21,6 +22,8 @@ ethjet_init ()
   if (!ctx) return NULL;
 
   ctx->ec = secp256k1_context_create (SECP256K1_CONTEXT_VERIFY);
+
+  init_globals();
 
   return ctx;
 }
@@ -132,6 +135,24 @@ int ethjet_blake2(uint8_t *in, size_t in_size,
     return 0;
   }
 
+  // for loading an element of F_{q^2} (a coordinate of G_2)
+  // consumes 64 bytes
+  int read_Fq2_element_v2 (uint8_t *in, mpz_t x0_data, mpz_t x1_data) {
+    // suprising "big-endian" encoding
+    read_Fq_element_v2(in+32, x0_data);
+    read_Fq_element_v2(in, x1_data);
+
+    return 0;
+  }
+
+  // for loading an element of F_r (a scalar for G_1)
+  // consumes 32 bytes
+  int read_Fr_element (uint8_t *in, mpz_t x_data) {
+    mpz_init(x_data);
+    mpz_import(x_data, 32, 1, sizeof(in[0]), 1, 0, in);
+    return 0;
+  }
+
   // for loading an element of F_q (a coordinate of G_1)
   // consumes 32 bytes
   int write_Fq_element_v2 (uint8_t *out, mpz_t x_data) {
@@ -179,6 +200,32 @@ int ethjet_blake2(uint8_t *in, size_t in_size,
     }
   }
 
+  // for loading a point in G_2
+  // consumes 128 bytes
+  void read_G2_point (uint8_t *in, twistpoint_fp2_t a) {
+    mpz_t ax0, ax1, ay0, ay1;
+    read_Fq2_element_v2(in, ax0, ax1);
+    read_Fq2_element_v2(in+64, ay0, ay1);
+
+    // create curve point from affine coordinates
+    // the point at infinity (0,0) is a special case
+    if (mpz_sgn(ax0) == 0 && mpz_sgn(ax1) == 0 && mpz_sgn(ay0) == 0 && mpz_sgn(ay1) == 0) {
+      twistpoint_fp2_init(a);
+      puts("INF TWIST");
+    } else {
+      twistpoint_fp2_affineset_mpz(a, ax0, ax1, ay0, ay1);
+    }
+
+    // a = alt_bn128_G2(ax, ay, alt_bn128_Fq2::one());
+    // if (! a.is_well_formed()) {
+    //   throw 0;
+    // }
+    // // additionally check that the element has the right order
+    // if (-alt_bn128_Fr::one() * a + a != alt_bn128_G2::G2_zero) {
+    //   throw 0;
+    // }
+  }
+
   // writes a point of G1
   // produces 64 bytes
   void write_G1_point_v2(uint8_t *out, curvepoint_fp_t p) {
@@ -215,15 +262,13 @@ int ethjet_ecadd_v2 (uint8_t *in, size_t in_size,
     return 0;
   }
 
-  init_globals();
-
   curvepoint_fp_t a;
   curvepoint_fp_t b, c;
   read_G1_point_v2(in, a);
   read_G1_point_v2(in+64, b);
 
-  curvepoint_fp_makeaffine(a); 
-  curvepoint_fp_makeaffine(b);
+  //curvepoint_fp_makeaffine(a); 
+  //curvepoint_fp_makeaffine(b);
 
   if (!curvepoint_fp_well_formed(a) || !curvepoint_fp_well_formed(b))
     return 0;
@@ -262,19 +307,29 @@ int ethjet_ecadd_v2 (uint8_t *in, size_t in_size,
       return 0;
     }
 
-    
-    init_globals();
-
     curvepoint_fp_t a;
+    mpz_t n;
    // curvepoint_fp_t ;
     read_G1_point_v2(in, a);
-    //read_G1_point_v2(in+64, b);
+    read_Fr_element(in+64, n);
     //curvepoint_fp_makeaffine(a);
-    //curvepoint_fp_makeaffine(b); 
-    //curvepoint_fp_mixadd(a, a, b);
-    curvepoint_fp_makeaffine(a);
+    //curvepoint_fp_makeaffine(b);
 
-     //write_G1_point_v2(out, na);
+
+  if (!curvepoint_fp_well_formed(a))
+    return 0;
+  // if (fpe_iszero(a->m_x) && fpe_isone(a->m_y) && fpe_iszero(a->m_z)) {
+  //   write_G1_point_v2(out, a);
+  //   return 1;
+  // }
+
+    if (mpz_sgn(n) == 0) {
+      curvepoint_fp_init(a);
+    } else {
+      curvepoint_fp_mul(a, a, n);
+      curvepoint_fp_makeaffine(a);
+      }
+     write_G1_point_v2(out, a);
 
       // alt_bn128_G1 a = read_G1_point(in);
       // alt_bn128_Fr n = read_Fr_element(in+64);
@@ -303,7 +358,7 @@ ethjet (struct ethjet_context *ctx,
     return ethjet_ecadd_v2 (in, in_size, out, out_size);
 
   case ETHJET_ECMUL:
-    return ethjet_ecmul (in, in_size, out, out_size);
+    return ethjet_ecmul_v2 (in, in_size, out, out_size);
 
   case ETHJET_ECPAIRING:
     return ethjet_ecpairing (in, in_size, out, out_size);
