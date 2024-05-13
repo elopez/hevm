@@ -42,4 +42,8 @@ void twistpoint_fp2_print(FILE *outfile, const twistpoint_fp2_t op);
 // Transform to Affine Coordinates (z=1)
 void twistpoint_fp2_makeaffine(twistpoint_fp2_t op);
 
+int twistpoint_fp2_zero(twistpoint_fp2_t op);
+
+int twistpoint_fp2_well_formed(const twistpoint_fp2_t op);
+
 #endif // ifdef TWISTPOINT_FP2_H

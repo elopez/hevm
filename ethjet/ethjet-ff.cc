@@ -93,13 +93,23 @@ namespace ethjet_ff {
     }
     a = alt_bn128_G2(ax, ay, alt_bn128_Fq2::one());
     if (! a.is_well_formed()) {
-      throw 0;
+      throw 1;
     }
     // additionally check that the element has the right order
     if (-alt_bn128_Fr::one() * a + a != alt_bn128_G2::G2_zero) {
-      throw 0;
+      throw 2;
     }
     return a;
+  }
+
+  extern "C" int good_read_G2_point(uint8_t *in) {
+    try {
+      read_G2_point(in);
+    } catch (int e) {
+      printf("WAS BAD HERE %d\n",e);
+      return 0;
+    }
+    return 1;
   }
 
   // writes an element of Fq

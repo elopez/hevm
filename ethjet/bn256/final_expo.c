@@ -6,7 +6,7 @@
 
 #include "final_expo.h"
 #include "fp.h"
-#include "curve.c"
+#include "curve.h"
 
 void final_expo(fp12e_t rop)
 {

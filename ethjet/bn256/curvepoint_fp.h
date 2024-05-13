@@ -56,6 +56,8 @@ void curvepoint_fp_makeaffine(curvepoint_fp_t point);
 // Print the (Jacobian) coordinates of a point
 void curvepoint_fp_print(FILE *outfile, const curvepoint_fp_t point);
 
+int curvepoint_fp_zero(const curvepoint_fp_t op);
+
 int curvepoint_fp_well_formed(const curvepoint_fp_t op);
 
 #endif // ifdef CURVEPOINT_FP_H

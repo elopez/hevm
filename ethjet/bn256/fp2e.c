@@ -40,6 +40,18 @@ void fp2e_setzero(fp2e_t rop)
 	fpe_setzero(rop->m_b);;
 }
 
+// Check if rop is one
+int fp2e_isone(const fp2e_t op)
+{
+	return fpe_iszero(op->m_a) && fpe_isone(op->m_b);
+}
+
+// Check if rop is zero
+int fp2e_iszero(const fp2e_t op)
+{
+	return fpe_iszero(op->m_a) && fpe_iszero(op->m_b);;
+}
+
 // Set an fp2e_t to value given in two strings
 void fp2e_set_str(fp2e_t rop, const char* a_str, const char* b_str)
 {

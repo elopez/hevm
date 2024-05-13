@@ -237,7 +237,7 @@ void optate(fp12e_t rop, const twistpoint_fp2_t op1, const curvepoint_fp_t op2)
     fp12e_mul(rop, rop, dummy);
 
     // t2 = cpucycles();
-    final_expo(rop);
+    // final_expo(rop);
     // t3 = cpucycles();
     // printf("Miller: %llu\nFinal expo: %llu\n", t2-t1, t3-t2);
 }
@@ -276,7 +276,7 @@ void ate(fp12e_t rop, const twistpoint_fp2_t op1, const curvepoint_fp_t op2)
         }
     }
     // t2 = cpucycles();
-    final_expo(rop);
+    //final_expo(rop);
     // t3 = cpucycles();
     // printf("Miller: %llu\nFinal expo: %llu\n", t2-t1, t3-t2);
 }

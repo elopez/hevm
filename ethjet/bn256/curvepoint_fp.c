@@ -190,6 +190,15 @@ void curvepoint_fp_print(FILE *outfile, const curvepoint_fp_t point)
 	fprintf(outfile, "]");
 }
 
+int curvepoint_fp_zero(const curvepoint_fp_t op)
+{
+    if (fpe_iszero(op->m_x) && fpe_isone(op->m_y) && fpe_iszero(op->m_z))
+    {
+        return 1;
+    }
+	return 0;
+}
+
 int curvepoint_fp_well_formed(const curvepoint_fp_t op)
 {
     if (fpe_iszero(op->m_x) && fpe_isone(op->m_y) && fpe_iszero(op->m_z))

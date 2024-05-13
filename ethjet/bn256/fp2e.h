@@ -35,6 +35,12 @@ void fp2e_setone(fp2e_t rop);
 // Set rop to zero
 void fp2e_setzero(fp2e_t rop);
 
+// Check if rop is one
+int fp2e_isone(const fp2e_t op);
+
+// Check if rop is zero
+int fp2e_iszero(const fp2e_t op);
+
 // Set an fp2e_t to value given in two strings
 void fp2e_set_str(fp2e_t rop, const char* a_str, const char* b_str);
 
