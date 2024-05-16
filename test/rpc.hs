@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 
 module Main where
@@ -69,14 +70,18 @@ tests = testGroup "rpc"
     ]
   , testGroup "execution with remote state"
     -- execute against remote state from a ds-test harness
-    [ test "dapp-test" $ do
+    [
+#ifndef mingw32_HOST_OS
+      test "dapp-test" $ do
         let testFile = "test/contracts/pass/rpc.sol"
         res <- runSolidityTestCustom testFile ".*" Nothing Nothing False testRpcInfo Foundry
         liftIO $ assertEqual "test result" True res
 
     -- concretely exec "transfer" on WETH9 using remote rpc
     -- https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2#code
-    , test "weth-conc" $ do
+    ,
+#endif
+      test "weth-conc" $ do
         let
           blockNum = 16198552
           wad = 0x999999999999999999
