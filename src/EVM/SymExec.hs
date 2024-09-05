@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
 module EVM.SymExec where
@@ -26,6 +28,7 @@ import Data.Text.IO qualified as T
 import Text.Printf (printf)
 import Data.Tree.Zipper qualified as Zipper
 import Data.Tuple (swap)
+import Data.Vector qualified as V
 import EVM (makeVm, abstractContract, initialContract, getCodeLocation, isValidJumpDest)
 import EVM.Exec
 import EVM.Fetch qualified as Fetch
@@ -98,29 +101,33 @@ extractCex (Cex c) = Just c
 extractCex _ = Nothing
 
 bool :: Expr EWord -> Prop
-bool e = POr (PEq e (Lit 1)) (PEq e (Lit 0))
+bool e = POr (PEq (Lit 1) e) (PEq (Lit 0) e)
 
 -- | Abstract calldata argument generation
 symAbiArg :: Text -> AbiType -> CalldataFragment
 symAbiArg name = \case
   AbiUIntType n ->
     if n `mod` 8 == 0 && n <= 256
-    then let v = Var name in St [Expr.inRange n v] v
+    then St [Expr.inRange n v] v
     else internalError "bad type"
   AbiIntType n ->
     if n `mod` 8 == 0 && n <= 256
     -- TODO: is this correct?
-    then let v = Var name in St [Expr.inRange n v] v
+    then St [Expr.inRange n v] v
     else internalError "bad type"
-  AbiBoolType -> let v = Var name in St [bool v] v
+  AbiBoolType -> St [bool v] v
   AbiAddressType -> St [] (WAddr (SymAddr name))
   AbiBytesType n ->
     if n > 0 && n <= 32
-    then let v = Var name in St [Expr.inRange (n * 8) v] v
+    then St [Expr.inRange (n * 8) v] v
     else internalError "bad type"
-  AbiArrayType sz tp ->
-    Comp $ fmap (\n -> symAbiArg (name <> n) tp) [T.pack (show n) | n <- [0..sz-1]]
+  AbiArrayType sz tps -> do
+    Comp . V.toList . V.imap (\(T.pack . show -> i) tp -> symAbiArg (name <> "-a-" <> i) tp) $ (V.replicate sz tps)
+  AbiTupleType tps ->
+    Comp . V.toList . V.imap (\(T.pack . show -> i) tp -> symAbiArg (name <> "-t-" <> i) tp) $ tps
   t -> internalError $ "TODO: symbolic abi encoding for " <> show t
+  where
+    v = Var name
 
 data CalldataFragment
   = St [Prop] (Expr EWord)
@@ -186,6 +193,7 @@ combineFragments fragments base = go (Lit 4) fragments (base, [])
 
 isSt :: CalldataFragment -> Bool
 isSt (St {}) = True
+isSt (Comp fs) = all isSt fs
 isSt _ = False
 
 
@@ -236,6 +244,7 @@ loadSymVM x callvalue cd create =
     , create = create
     , txAccessList = mempty
     , allowFFI = False
+    , freshAddresses = 0
     })
 
 -- | Interpreter which explores all paths at branching points. Returns an
@@ -474,7 +483,7 @@ flattenExpr = go []
   where
     go :: [Prop] -> Expr End -> [Expr End]
     go pcs = \case
-      ITE c t f -> go (PNeg ((PEq c (Lit 0))) : pcs) t <> go (PEq c (Lit 0) : pcs) f
+      ITE c t f -> go (PNeg ((PEq (Lit 0) c)) : pcs) t <> go (PEq (Lit 0) c : pcs) f
       Success ps trace msg store -> [Success (nubOrd $ ps <> pcs) trace msg store]
       Failure ps trace e -> [Failure (nubOrd $ ps <> pcs) trace e]
       Partial ps trace p -> [Partial (nubOrd $ ps <> pcs) trace p]
@@ -807,34 +816,29 @@ showModel cd (expr, res) = do
     Unsat -> pure () -- ignore unreachable branches
     Error e -> internalError $ "smt solver returned an error: " <> show e
     EVM.Solvers.Unknown -> do
+      putStrLn ""
       putStrLn "--- Branch ---"
-      putStrLn ""
       putStrLn "Unable to produce a model for the following end state:"
-      putStrLn ""
       T.putStrLn $ indent 2 $ formatExpr expr
       putStrLn ""
     Sat cex -> do
+      putStrLn ""
       putStrLn "--- Branch ---"
-      putStrLn ""
       putStrLn "Inputs:"
-      putStrLn ""
       T.putStrLn $ indent 2 $ formatCex cd Nothing cex
-      putStrLn ""
       putStrLn "End State:"
-      putStrLn ""
       T.putStrLn $ indent 2 $ formatExpr expr
-      putStrLn ""
 
 
 formatCex :: Expr Buf -> Maybe Sig -> SMTCex -> Text
-formatCex cd sig m@(SMTCex _ _ _ store blockContext txContext) = T.unlines $
+formatCex cd sig m@(SMTCex _ addrs _ store blockContext txContext) = T.unlines $
   [ "Calldata:"
   , indent 2 cd'
-  , ""
   ]
   <> storeCex
   <> txCtx
   <> blockCtx
+  <> addrsCex
   where
     -- we attempt to produce a model for calldata by substituting all variables
     -- and buffers provided by the model into the original calldata expression.
@@ -856,7 +860,6 @@ formatCex cd sig m@(SMTCex _ _ _ store blockContext txContext) = T.unlines $
               ("Addr " <> (T.pack . show $ key)
                 <> ": " <> (T.pack $ show (Map.toList val))) : acc
             ) mempty store
-          , ""
           ]
 
     txCtx :: [Text]
@@ -867,8 +870,17 @@ formatCex cd sig m@(SMTCex _ _ _ store blockContext txContext) = T.unlines $
         , indent 2 $ T.unlines $ Map.foldrWithKey (\key val acc ->
             (showTxCtx key <> ": " <> (T.pack $ show val)) : acc
           ) mempty (filterSubCtx txContext)
-        , ""
         ]
+
+    addrsCex :: [Text]
+    addrsCex
+      | Map.null addrs = []
+      | otherwise =
+          [ "Addrs:"
+          , indent 2 $ T.unlines $ Map.foldrWithKey (\key val acc ->
+              ((T.pack . show $ key) <> ": " <> (T.pack $ show val)) : acc
+            ) mempty addrs
+          ]
 
     -- strips the frame arg from frame context vars to make them easier to read
     showTxCtx :: Expr EWord -> Text
@@ -893,7 +905,6 @@ formatCex cd sig m@(SMTCex _ _ _ store blockContext txContext) = T.unlines $
         , indent 2 $ T.unlines $ Map.foldrWithKey (\key val acc ->
             (T.pack $ show key <> ": " <> show val) : acc
           ) mempty txContext
-        , ""
         ]
 
     prettyBuf :: Expr Buf -> Text

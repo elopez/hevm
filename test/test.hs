@@ -28,13 +28,13 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import Data.Time (diffUTCTime, getCurrentTime)
+import Data.Tuple.Extra
 import Data.Typeable
 import Data.Vector qualified as V
 import Data.Word (Word8)
 import GHC.Conc (getNumProcessors)
 import System.Directory
 import System.Environment
-import System.Info (os)
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (Failure, Success)
 import Test.QuickCheck.Instances.Text()
@@ -111,10 +111,6 @@ main = defaultMain tests
 -- https://github.com/UnkindPartition/tasty/tree/ee6fe7136fbcc6312da51d7f1b396e1a2d16b98a#patterns
 runSubSet :: String -> IO ()
 runSubSet p = defaultMain . applyPattern p $ tests
-
-ignoreTestWindows :: String -> TestTree -> TestTree
-ignoreTestWindows reason t | os == "mingw32" = ignoreTestBecause ("unsupported on Windows: " <> reason) t
-                           | otherwise       = t
 
 tests :: TestTree
 tests = testGroup "hevm"
@@ -673,6 +669,33 @@ tests = testGroup "hevm"
         let simplified = Expr.simplify s2
         checkEquiv simplified s2
     ]
+  , testGroup "isUnsat-concrete-tests" [
+      test "disjunction-left-false" $ do
+        let
+          t = [PEq (Var "x") (Lit 1), POr (PEq (Var "x") (Lit 0)) (PEq (Var "y") (Lit 1)), PEq (Var "y") (Lit 2)]
+          cannotBeSat = Expr.isUnsat t
+        assertEqualM "Must be equal" cannotBeSat True
+    , test "disjunction-right-false" $ do
+        let
+          t = [PEq (Var "x") (Lit 1), POr (PEq (Var "y") (Lit 1)) (PEq (Var "x") (Lit 0)), PEq (Var "y") (Lit 2)]
+          cannotBeSat = Expr.isUnsat t
+        assertEqualM "Must be equal" cannotBeSat True
+    , test "disjunction-both-false" $ do
+        let
+          t = [PEq (Var "x") (Lit 1), POr (PEq (Var "x") (Lit 2)) (PEq (Var "x") (Lit 0)), PEq (Var "y") (Lit 2)]
+          cannotBeSat = Expr.isUnsat t
+        assertEqualM "Must be equal" cannotBeSat True
+    , ignoreTest $ test "disequality-and-equality" $ do
+        let
+          t = [PNeg (PEq (Lit 1) (Var "arg1")), PEq (Lit 1) (Var "arg1")]
+          cannotBeSat = Expr.isUnsat t
+        assertEqualM "Must be equal" cannotBeSat True
+    , test "equality-and-disequality" $ do
+        let
+          t = [PEq (Lit 1) (Var "arg1"), PNeg (PEq (Lit 1) (Var "arg1"))]
+          cannotBeSat = Expr.isUnsat t
+        assertEqualM "Must be equal" cannotBeSat True
+  ]
   , testGroup "simpProp-concrete-tests" [
       test "simpProp-concrete-trues" $ do
         let
@@ -715,12 +738,6 @@ tests = testGroup "hevm"
           t = [PEq (Lit 5) (Var "a"), POr (POr (PEq (Var "a") (Lit 4)) (PEq (Var "a") (Lit 6))) (PEq (Var "a") (Lit 3))]
           simplified = Expr.simplifyProps t
         assertEqualM "Must be equal" [PBool False] simplified
-    , test "simpProp-concrete-or-eq-rem" $ do
-        let
-          -- a = 5 && ((a=4 || a=6) || a=3)  -> False
-          t = [PEq (Lit 5) (Var "a"), POr (POr (PEq (Var "a") (Lit 4)) (PEq (Var "a") (Lit 6))) (PEq (Var "a") (Lit 3))]
-          simplified = Expr.simplifyProps t
-        assertEqualM "Must be equal" [PBool False] simplified
     , test "simpProp-inner-expr-simp" $ do
         let
           -- 5+1 = 6
@@ -733,6 +750,18 @@ tests = testGroup "hevm"
           t = [PAnd (PEq (Add (Lit 5) (Lit 1)) (Var "a")) (PEq (Var "a") (Lit 7))]
           simplified = Expr.simplifyProps t
         assertEqualM "Must be equal" [PBool False] simplified
+    , test "simpProp-inner-expr-bitwise-and" $ do
+        let
+          -- 1 & 2 != 2
+          t = [PEq (And (Lit 1) (Lit 2)) (Lit 2)]
+          simplified = Expr.simplifyProps t
+        assertEqualM "Must be equal" [PBool False] simplified
+    , test "simpProp-inner-expr-bitwise-or" $ do
+        let
+          -- 2 | 4 == 6
+          t = [PEq (Or (Lit 2) (Lit 4)) (Lit 6)]
+          simplified = Expr.simplifyProps t
+        assertEqualM "Must be equal" [] simplified
   ]
   , testGroup "MemoryTests"
     [ test "read-write-same-byte"  $ assertEqualM ""
@@ -828,7 +857,37 @@ tests = testGroup "hevm"
         SolidityCall "x = uint(keccak256(abi.encodePacked(a)));"
           [AbiString ""] ===> AbiUInt 256 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
 
-    , testProperty "abi encoding vs. solidity" $ withMaxSuccess 20 $ forAll (arbitrary >>= genAbiValue) $
+    , testProperty "symbolic-abi-enc-vs-solidity" $ \(SymbolicAbiVal y) -> prop $ do
+          Just encoded <- runStatements [i| x = abi.encode(a);|] [y] AbiBytesDynamicType
+          let solidityEncoded = case decodeAbiValue (AbiTupleType $ V.fromList [AbiBytesDynamicType]) (BS.fromStrict encoded) of
+                AbiTuple (V.toList -> [e]) -> e
+                _ -> internalError "AbiTuple expected"
+          let
+              frag = [symAbiArg "y" (AbiTupleType $ V.fromList [abiValueType y])]
+              (hevmEncoded, _) = first (Expr.drop 4) $ combineFragments frag (ConcreteBuf "")
+              expectedVals = expectedConcVals "y" (AbiTuple . V.fromList $ [y])
+              hevmConcretePre = subModel expectedVals hevmEncoded
+              hevmConcrete = case Expr.simplify hevmConcretePre of
+                               ConcreteBuf b -> b
+                               buf -> internalError ("valMap: " <> show expectedVals <> "\ny:" <> show y <> "\n" <> "buf: " <> show buf)
+          -- putStrLnM $ "frag: " <> show frag
+          -- putStrLnM $ "expectedVals: " <> show expectedVals
+          -- putStrLnM $ "frag: " <> show frag
+          -- putStrLnM $ "hevmEncoded: " <> show hevmEncoded
+          -- putStrLnM $ "solidity encoded: " <> show solidityEncoded
+          -- putStrLnM $ "our encoded     : " <> show (AbiBytesDynamic hevmConcrete)
+          -- putStrLnM $ "y     : " <> show y
+          -- putStrLnM $ "y type: " <> showAlter y
+          -- putStrLnM $ "hevmConcretePre: " <> show hevmConcretePre
+          assertEqualM "abi encoding mismatch" solidityEncoded (AbiBytesDynamic hevmConcrete)
+    , testProperty "symbolic-abi encoding-vs-solidity-2-args" $ \(SymbolicAbiVal x', SymbolicAbiVal y') -> prop $ do
+          Just encoded <- runStatements [i| x = abi.encode(a, b);|] [x', y'] AbiBytesDynamicType
+          let solidityEncoded = case decodeAbiValue (AbiTupleType $ V.fromList [AbiBytesDynamicType]) (BS.fromStrict encoded) of
+                AbiTuple (V.toList -> [e]) -> e
+                _ -> internalError "AbiTuple expected"
+          let hevmEncoded = encodeAbiValue (AbiTuple $ V.fromList [x',y'])
+          assertEqualM "abi encoding mismatch" solidityEncoded (AbiBytesDynamic hevmEncoded)
+    , testProperty "abi-encoding-vs-solidity" $ forAll (arbitrary >>= genAbiValue) $
       \y -> prop $ do
           Just encoded <- runStatements [i| x = abi.encode(a);|]
             [y] AbiBytesDynamicType
@@ -838,7 +897,7 @@ tests = testGroup "hevm"
           let hevmEncoded = encodeAbiValue (AbiTuple $ V.fromList [y])
           assertEqualM "abi encoding mismatch" solidityEncoded (AbiBytesDynamic hevmEncoded)
 
-    , testProperty "abi encoding vs. solidity (2 args)" $ withMaxSuccess 20 $ forAll (arbitrary >>= bothM genAbiValue) $
+    , testProperty "abi-encoding-vs-solidity-2-args" $ forAll (arbitrary >>= bothM genAbiValue) $
       \(x', y') -> prop $ do
           Just encoded <- runStatements [i| x = abi.encode(a, b);|]
             [x', y'] AbiBytesDynamicType
@@ -849,7 +908,7 @@ tests = testGroup "hevm"
           assertEqualM "abi encoding mismatch" solidityEncoded (AbiBytesDynamic hevmEncoded)
 
     -- we need a separate test for this because the type of a function is "function() external" in solidity but just "function" in the abi:
-    , testProperty "abi encoding vs. solidity (function pointer)" $ withMaxSuccess 20 $ forAll (genAbiValue AbiFunctionType) $
+    , testProperty "abi-encoding-vs-solidity-function-pointer" $ withMaxSuccess 20 $ forAll (genAbiValue AbiFunctionType) $
       \y -> prop $ do
           Just encoded <- runFunction [i|
               function foo(function() external a) public pure returns (bytes memory x) {
@@ -1248,7 +1307,7 @@ tests = testGroup "hevm"
             Partial _ _ (JumpIntoSymbolicCode _ _) -> assertBoolM "" True
             _ -> assertBoolM "did not encounter expected partial node" False
     ]
-  , ignoreTestWindows "odd Git failures" $ testGroup "Dapp-Tests"
+  , testGroup "Dapp-Tests"
     [ test "Trivial-Pass" $ do
         let testFile = "test/contracts/pass/trivial.sol"
         runSolidityTest testFile ".*" >>= assertEqualM "test result" True
@@ -3696,6 +3755,30 @@ decodeAbiValues types bs =
         _ -> internalError "AbiTuple expected"
   in V.toList xy
 
+-- abi types that are supported in the symbolic abi encoder
+newtype SymbolicAbiType = SymbolicAbiType AbiType
+  deriving (Eq, Show)
+
+newtype SymbolicAbiVal = SymbolicAbiVal AbiValue
+  deriving (Eq, Show)
+
+instance Arbitrary SymbolicAbiVal where
+  arbitrary = do
+    SymbolicAbiType ty <- arbitrary
+    SymbolicAbiVal <$> genAbiValue ty
+
+instance Arbitrary SymbolicAbiType where
+  arbitrary = SymbolicAbiType <$> frequency
+    [ (5, (AbiUIntType . (* 8)) <$> choose (1, 32))
+    , (5, (AbiIntType . (* 8)) <$> choose (1, 32))
+    , (5, pure AbiAddressType)
+    , (5, pure AbiBoolType)
+    , (5, AbiBytesType <$> choose (1,32))
+    , (1, do SymbolicAbiType ty <- scale (`div` 2) arbitrary
+             AbiArrayType <$> (choose (1, 30)) <*> pure ty
+      )
+    ]
+
 newtype Bytes = Bytes ByteString
   deriving Eq
 
@@ -4322,3 +4405,17 @@ checkPost post c sig = do
 
 successGen :: [Prop] -> Expr End
 successGen props = Success props mempty (ConcreteBuf "") mempty
+
+-- gets the expected concrete values for symbolic abi testing
+expectedConcVals :: Text -> AbiValue -> SMTCex
+expectedConcVals nm val = case val of
+  AbiUInt {} -> mempty { vars = Map.fromList [(Var nm, mkWord val)] }
+  AbiInt {} -> mempty { vars = Map.fromList [(Var nm, mkWord val)] }
+  AbiAddress {} -> mempty { addrs = Map.fromList [(SymAddr nm, truncateToAddr (mkWord val))] }
+  AbiBool {} -> mempty { vars = Map.fromList [(Var nm, mkWord val)] }
+  AbiBytes {} -> mempty { vars = Map.fromList [(Var nm, mkWord val)] }
+  AbiArray _ _ vals -> mconcat . V.toList . V.imap (\(T.pack . show -> idx) v -> expectedConcVals (nm <> "-a-" <> idx) v) $ vals
+  AbiTuple vals -> mconcat . V.toList . V.imap (\(T.pack . show -> idx) v -> expectedConcVals (nm <> "-t-" <> idx) v) $ vals
+  _ -> internalError $ "unsupported Abi type " <> show nm <> " val: " <> show val <> " val type: " <> showAlter val
+  where
+    mkWord = word . encodeAbiValue

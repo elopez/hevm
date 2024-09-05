@@ -8,9 +8,9 @@
 module EVM.Expr where
 
 import Prelude hiding (LT, GT)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.ST (ST)
-import Control.Monad.State (put, get, execState, State)
+import Control.Monad.State (put, get, modify, execState, State)
 import Data.Bits hiding (And, Xor)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -19,6 +19,7 @@ import Data.List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import Data.Semigroup (Any, Any(..), getAny)
+import Data.Typeable
 import Data.Vector qualified as V
 import Data.Vector (Vector)
 import Data.Vector.Mutable qualified as MV
@@ -199,6 +200,17 @@ sar = op2 SAR (\x y ->
        if msb then maxBound else 0
      else
        fromIntegral $ shiftR asSigned (fromIntegral x))
+
+
+-- Props
+
+peq :: (Typeable a) => Expr a -> Expr a -> Prop
+peq (Lit x) (Lit y) = PBool (x == y)
+peq a@(Lit _) b = PEq a b
+peq a b@(Lit _) = PEq b a -- we always put concrete values on LHS
+peq a b
+  | a == b = PBool True
+  | otherwise = PEq a b
 
 -- ** Bufs ** --------------------------------------------------------------------------------------
 
@@ -1045,7 +1057,11 @@ simplify e = if (mapExpr go e == e)
 
     -- Mod
     go (Mod _ (Lit 0)) = Lit 0
+    go (SMod _ (Lit 0)) = Lit 0
     go (Mod a b) | a == b = Lit 0
+    go (SMod a b) | a == b = Lit 0
+    go (Mod (Lit 0) _) = Lit 0
+    go (SMod (Lit 0) _) = Lit 0
 
     -- double add/sub.
     -- Notice that everything is done mod 2**256. So for example:
@@ -1109,22 +1125,18 @@ simplify e = if (mapExpr go e == e)
       | otherwise = o
 
     -- Bitwise AND & OR. These MUST preserve bitwise equivalence
-    go o@(And (Lit x) _)
-      | x == 0 = Lit 0
-      | otherwise = o
-    go o@(And v (Lit x))
-      | x == 0 = Lit 0
-      | x == maxLit = v
-      | otherwise = o
-    go (And a b) | a == b = a
-    go (And a (Not b)) | a == b = Lit 0
-    go o@(Or (Lit x) b)
-      | x == 0 = b
-      | otherwise = o
-    go o@(Or a (Lit x))
-      | x == 0 = a
-      | otherwise = o
-    go (Or a b) | a == b = a
+    go (And a b)
+      | a == b = a
+      | b == (Not a) || a == (Not b) = Lit 0
+      | a == (Lit 0) || b == (Lit 0) = Lit 0
+      | a == (Lit maxLit) = b
+      | b == (Lit maxLit) = a
+      | otherwise = EVM.Expr.and a b
+    go (Or a b)
+      | a == b = a
+      | a == (Lit 0) = b
+      | b == (Lit 0) = a
+      | otherwise = EVM.Expr.or a b
 
     -- If x is ever non zero the Or will always evaluate to some non zero value and the false branch will be unreachable
     -- NOTE: with AND this does not work, because and(0x8, 0x4) = 0
@@ -1163,10 +1175,13 @@ simplify e = if (mapExpr go e == e)
                      (Lit 1, _) -> b
                      _ -> mul a b
 
-    -- Some trivial div eliminations
+    -- Some trivial (s)div eliminations
     go (Div (Lit 0) _) = Lit 0 -- divide 0 by anything (including 0) is zero in EVM
     go (Div _ (Lit 0)) = Lit 0 -- divide anything by 0 is zero in EVM
     go (Div a (Lit 1)) = a
+    go (SDiv (Lit 0) _) = Lit 0 -- divide 0 by anything (including 0) is zero in EVM
+    go (SDiv _ (Lit 0)) = Lit 0 -- divide anything by 0 is zero in EVM
+    go (SDiv a (Lit 1)) = a
     -- NOTE: Div x x is NOT 1, because Div 0 0 is 0, not 1.
 
     -- If a >= b then the value of the `Max` expression can never be < b
@@ -1189,10 +1204,10 @@ simplify e = if (mapExpr go e == e)
 
 
 simplifyProps :: [Prop] -> [Prop]
-simplifyProps ps = if canBeSat then simplified else [PBool False]
+simplifyProps ps = if cannotBeSat then [PBool False] else simplified
   where
     simplified = remRedundantProps . map simplifyProp . flattenProps $ ps
-    canBeSat = constFoldProp simplified
+    cannotBeSat = isUnsat simplified
 
 -- | Evaluate the provided proposition down to its most concrete result
 -- Also simplifies the inner Expr, if it exists
@@ -1218,29 +1233,29 @@ simplifyProp prop =
     go (PLEq a (Max _ b)) | a == b = PBool True
     go (PLEq (Sub a b) c) | a == c = PLEq b a
     go (PLT (Max (Lit a) b) (Lit c)) | a < c = PLT b (Lit c)
-    go (PLT (Lit 0) (Eq a b)) = PEq a b
+    go (PLT (Lit 0) (Eq a b)) = peq a b
 
     -- negations
     go (PNeg (PBool b)) = PBool (Prelude.not b)
     go (PNeg (PNeg a)) = a
 
     -- solc specific stuff
-    go (PEq (IsZero (IsZero (Eq a b))) (Lit 0)) = PNeg (PEq a b)
+    go (PEq (Lit 0) (IsZero (IsZero (Eq a b)))) = PNeg (peq a b)
 
     -- iszero(a) -> (a == 0)
     -- iszero(iszero(a))) -> ~(a == 0) -> a > 0
     -- iszero(iszero(a)) == 0 -> ~~(a == 0) -> a == 0
     -- ~(iszero(iszero(a)) == 0) -> ~~~(a == 0) -> ~(a == 0) -> a > 0
-    go (PNeg (PEq (IsZero (IsZero a)) (Lit 0))) = PLT (Lit 0) a
+    go (PNeg (PEq (Lit 0) (IsZero (IsZero a)))) = PLT (Lit 0) a
 
     -- iszero(a) -> (a == 0)
     -- iszero(a) == 0 -> ~(a == 0)
     -- ~(iszero(a) == 0) -> ~~(a == 0) -> a == 0
-    go (PNeg (PEq (IsZero a) (Lit 0))) = PEq a (Lit 0)
+    go (PNeg (PEq (Lit 0) (IsZero a))) = peq (Lit 0) a
 
     -- a < b == 0 -> ~(a < b)
     -- ~(a < b == 0) -> ~~(a < b) -> a < b
-    go (PNeg (PEq (LT a b) (Lit 0x0))) = PLT a b
+    go (PNeg (PEq (Lit 0) (LT a b))) = PLT a b
 
     -- And/Or
     go (PAnd (PBool l) (PBool r)) = PBool (l && r)
@@ -1260,21 +1275,19 @@ simplifyProp prop =
     go (PImpl (PBool False) _) = PBool True
 
     -- Double negation
-    go (PEq (IsZero (Eq a b)) (Lit 0)) = PEq a b
-    go (PEq (IsZero (LT a b)) (Lit 0)) = PLT a b
-    go (PEq (IsZero (GT a b)) (Lit 0)) = PGT a b
-    go (PEq (IsZero (LEq a b)) (Lit 0)) = PLEq a b
-    go (PEq (IsZero (GEq a b)) (Lit 0)) = PGEq a b
+    go (PEq (Lit 0) (IsZero (Eq a b))) = peq a b
+    go (PEq (Lit 0) (IsZero (LT a b))) = PLT a b
+    go (PEq (Lit 0) (IsZero (GT a b))) = PGT a b
+    go (PEq (Lit 0) (IsZero (LEq a b))) = PLEq a b
+    go (PEq (Lit 0) (IsZero (GEq a b))) = PGEq a b
 
     -- Eq
-    go (PEq (Eq a b) (Lit 0)) = PNeg (PEq a b)
-    go (PEq (Eq a b) (Lit 1)) = PEq a b
-    go (PEq (Sub a b) (Lit 0)) = PEq a b
-    go (PEq (LT a b) (Lit 0)) = PLEq b a
-    go (PEq (Lit l) (Lit r)) = PBool (l == r)
-    go o@(PEq l r)
-      | l == r = PBool True
-      | otherwise = o
+    go (PEq (Lit 0) (Eq a b)) = PNeg (peq a b)
+    go (PEq (Lit 1) (Eq a b)) = peq a b
+    go (PEq (Lit 0) (Sub a b)) = peq a b
+    go (PEq (Lit 0) (LT a b)) = PLEq b a
+    go (PEq l r) = peq l r
+
     go p = p
 
 
@@ -1537,31 +1550,25 @@ data ConstState = ConstState
   }
   deriving (Show)
 
--- | Folds constants
-constFoldProp :: [Prop] -> Bool
-constFoldProp ps = oneRun ps (ConstState mempty True)
+-- | Checks if a conjunction of propositions is definitely unsatisfiable
+isUnsat :: [Prop] -> Bool
+isUnsat ps = Prelude.not $ oneRun ps (ConstState mempty True)
   where
     oneRun ps2 startState = (execState (mapM (go . simplifyProp) ps2) startState).canBeSat
     go :: Prop -> State ConstState ()
-    go x = case x of
+    go = \case
         -- PEq
         PEq (Lit l) a -> do
           s <- get
           case Map.lookup a s.values of
-            Just l2 -> case l==l2 of
-                True -> pure ()
-                False -> put ConstState {canBeSat=False, values=mempty}
-            Nothing -> do
-              let vs' = Map.insert a l s.values
-              put $ s{values=vs'}
+            Just l2 -> unless (l==l2) $ put ConstState {canBeSat=False, values=mempty}
+            Nothing -> modify (\s' -> s'{values=Map.insert a l s'.values})
         PEq a b@(Lit _) -> go (PEq b a)
         -- PNeg
         PNeg (PEq (Lit l) a) -> do
           s <- get
           case Map.lookup a s.values of
-            Just l2 -> case l==l2 of
-                True -> put ConstState {canBeSat=False, values=mempty}
-                False -> pure ()
+            Just l2 -> when (l==l2) $ put ConstState {canBeSat=False, values=mempty}
             Nothing -> pure ()
         PNeg (PEq a b@(Lit _)) -> go $ PNeg (PEq b a)
         -- Others
@@ -1575,8 +1582,6 @@ constFoldProp ps = oneRun ps (ConstState mempty True)
             v2 = oneRun [b] s
           unless v1 $ go b
           unless v2 $ go a
-          s2 <- get
-          put $ s{canBeSat=(s2.canBeSat && (v1 || v2))}
         PBool False -> put $ ConstState {canBeSat=False, values=mempty}
         _ -> pure ()
 

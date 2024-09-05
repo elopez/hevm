@@ -542,7 +542,7 @@ data EvmError
 
 -- | Sometimes we can only partially execute a given program
 data PartialExec
-  = UnexpectedSymbolicArg { pc :: Int, msg  :: String, args  :: [SomeExpr] }
+  = UnexpectedSymbolicArg { pc :: Int, opcode :: String, msg  :: String, args  :: [SomeExpr] }
   | MaxIterationsReached  { pc :: Int, addr :: Expr EAddr }
   | JumpIntoSymbolicCode  { pc :: Int, jumpDst :: Int }
   deriving (Show, Eq, Ord)
@@ -940,6 +940,7 @@ data VMOpts (t :: VMType) = VMOpts
   , create :: Bool
   , txAccessList :: Map (Expr EAddr) [W256]
   , allowFFI :: Bool
+  , freshAddresses :: Int
   }
 
 deriving instance Show (VMOpts Symbolic)
