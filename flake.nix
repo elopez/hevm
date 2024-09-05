@@ -52,7 +52,7 @@
         }));
 
         hsPkgs = ps :
-          ps.haskellPackages.override {
+          ps.haskell.packages.ghc96.override {
             overrides = hfinal: hprev: {
               with-utf8 =
                 if (with ps.stdenv; hostPlatform.isDarwin && hostPlatform.isx86)
@@ -180,6 +180,7 @@
 
         devShells.default = with pkgs; let
           libraryPath = "${lib.makeLibraryPath [ libff secp256k1 gmp ]}";
+          haskellPackages = hsPkgs pkgs;
         in haskellPackages.shellFor {
           packages = _: [ (hevmBase pkgs) ];
           buildInputs = [
