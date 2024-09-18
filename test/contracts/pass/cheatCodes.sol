@@ -16,6 +16,8 @@ interface Hevm {
     function startPrank(address) external;
     function stopPrank() external;
     function label(address addr, string calldata label) external;
+    function setEnv(string calldata variable, string calldata value) external;
+    function envBool(string calldata variable) external returns (bool);
 }
 
 contract HasStorage {
@@ -113,6 +115,27 @@ contract CheatCodes is DSTest {
 
         (string memory output) = abi.decode(hevm.ffi(inputs), (string));
         assertEq(output, "acab");
+    }
+
+    function prove_envBool() public {
+        string memory varname = "ENV_BOOL_TEST";
+
+        hevm.setEnv(varname, "true");
+        assert(hevm.envBool(varname));
+        hevm.setEnv(varname, "True");
+        assert(hevm.envBool(varname));
+
+        hevm.setEnv(varname, "false");
+        assert(!hevm.envBool(varname));
+        hevm.setEnv(varname, "False");
+        assert(!hevm.envBool(varname));
+
+        hevm.setEnv(varname, "invalid");
+        try hevm.envBool(varname) {
+            assert(false);
+        } catch {
+            assert(true);
+        }
     }
 
     function prove_prank() public {

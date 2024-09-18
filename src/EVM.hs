@@ -1859,9 +1859,43 @@ cheatActions = Map.fromList
             #labels %= Map.insert addr (decodeUtf8 label)
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
+
+  , action "setEnv(string,string)" $
+      \sig _ _ input -> case decodeBuf [AbiStringType, AbiStringType] input of
+        CAbi valsArr -> case valsArr of
+          [AbiString variable, AbiString value] -> let
+            varStr = unpack $ decodeUtf8 variable
+            varVal = unpack $ decodeUtf8 value
+            cont = assign #result Nothing
+            in query (PleaseSetEnv varStr varVal cont)
+          _ -> vmError (BadCheatCode sig)
+        _ -> vmError (BadCheatCode sig)
+
+  , action "envBool(string)" $
+      \sig outOffset _ input -> case decodeBuf [AbiStringType] input of
+        CAbi valsArr -> case valsArr of
+          [AbiString variable] -> let
+            varStr = unpack $ decodeUtf8 variable
+            cont value = case stringToBool value of
+              Right v -> do
+                let encoded = encodeAbiValue $ AbiBool v
+                assign (#state % #returndata) (ConcreteBuf encoded)
+                copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+                assign #result Nothing
+              Left e -> finishFrame (FrameReverted $ errorMsg e)
+            in query (PleaseReadEnv varStr cont)
+          _ -> vmError (BadCheatCode sig)
+        _ -> vmError (BadCheatCode sig)
   ]
   where
     action s f = (abiKeccak s, f (abiKeccak s))
+    errorMsg err = ConcreteBuf $ selector "Error(string)" <> encodeAbiValue (AbiString err)
+    stringToBool s = case s of
+      "true" -> Right True
+      "True" -> Right True
+      "false" -> Right False
+      "False" -> Right False
+      _ -> Left "invalid value"
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case

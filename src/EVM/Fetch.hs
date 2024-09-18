@@ -26,6 +26,7 @@ import Network.Wreq
 import Network.Wreq.Session (Session)
 import Network.Wreq.Session qualified as Session
 import Numeric.Natural (Natural)
+import System.Environment (lookupEnv, setEnv)
 import System.Process
 import Control.Monad.IO.Class
 import EVM.Effects
@@ -230,6 +231,14 @@ oracle solvers info q = do
            Just x  -> pure (continue x)
            Nothing ->
              internalError $ "oracle error: " ++ show q
+
+    PleaseReadEnv variable continue -> do
+      value <- liftIO $ lookupEnv variable
+      pure . continue $ fromMaybe "" value
+
+    PleaseSetEnv variable value continue -> do
+      liftIO $ setEnv variable value
+      pure continue
 
 type Fetcher t m s = App m => Query t s -> m (EVM t s ())
 

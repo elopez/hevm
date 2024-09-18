@@ -560,6 +560,8 @@ data Query t s where
   PleaseFetchSlot     :: Addr -> W256 -> (W256 -> EVM t s ()) -> Query t s
   PleaseAskSMT        :: Expr EWord -> [Prop] -> (BranchCondition -> EVM Symbolic s ()) -> Query Symbolic s
   PleaseDoFFI         :: [String] -> (ByteString -> EVM t s ()) -> Query t s
+  PleaseReadEnv       :: String -> (String -> EVM t s ()) -> Query t s
+  PleaseSetEnv        :: String -> String -> EVM t s () -> Query t s
 
 -- | Execution could proceed down one of two branches
 data Choose s where
@@ -583,6 +585,10 @@ instance Show (Query t s) where
         ++ show constraints ++ ">") ++)
     PleaseDoFFI cmd _ ->
       (("<EVM.Query: do ffi: " ++ (show cmd)) ++)
+    PleaseReadEnv variable _ ->
+      (("<EVM.Query: read env: " ++ variable) ++)
+    PleaseSetEnv variable value _ ->
+      (("<EVM.Query: set env: " ++ variable ++ " to: " ++ value) ++)
 
 instance Show (Choose s) where
   showsPrec _ = \case
