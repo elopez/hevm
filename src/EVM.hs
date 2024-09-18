@@ -33,8 +33,10 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Lazy qualified as LS
 import Data.ByteString.Char8 qualified as Char8
+import Data.Either (partitionEithers)
 import Data.Foldable (toList)
 import Data.List (find)
+import Data.List.Split (splitOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, fromJust, isJust)
@@ -1866,7 +1868,7 @@ cheatActions = Map.fromList
           [AbiString variable, AbiString value] -> let
             varStr = unpack $ decodeUtf8 variable
             varVal = unpack $ decodeUtf8 value
-            cont = assign #result Nothing
+            cont = continueOnce noop
             in query (PleaseSetEnv varStr varVal cont)
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
@@ -1876,13 +1878,31 @@ cheatActions = Map.fromList
         CAbi valsArr -> case valsArr of
           [AbiString variable] -> let
             varStr = unpack $ decodeUtf8 variable
-            cont value = case stringToBool value of
-              Right v -> do
-                let encoded = encodeAbiValue $ AbiBool v
-                assign (#state % #returndata) (ConcreteBuf encoded)
-                copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
-                assign #result Nothing
-              Left e -> finishFrame (FrameReverted $ errorMsg e)
+            cont value = continueOnce $ do
+              case stringToBool value of
+                Right v -> do
+                  let encoded = encodeAbiValue $ AbiBool v
+                  assign (#state % #returndata) (ConcreteBuf encoded)
+                  copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+                Left e -> finishFrame (FrameReverted $ errorMsg e)
+            in query (PleaseReadEnv varStr cont)
+          _ -> vmError (BadCheatCode sig)
+        _ -> vmError (BadCheatCode sig)
+
+  , action "envBool(string,string)" $
+      \sig outOffset _ input -> case decodeBuf [AbiStringType, AbiStringType] input of
+        CAbi valsArr -> case valsArr of
+          [AbiString variable, AbiString delimiter] -> let
+            varStr = unpack $ decodeUtf8 variable
+            delimStr = unpack $ decodeUtf8 delimiter
+            cont value = continueOnce $ do
+              let (errors, values) = partitionEithers $ map stringToBool $ splitOn delimStr value
+              case errors of
+                [] -> do
+                  let encoded = encodeAbiValue $ AbiTuple $ V.fromList $ [AbiArrayDynamic AbiBoolType $ V.fromList $ map AbiBool values]
+                  assign (#state % #returndata) (ConcreteBuf encoded)
+                  copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+                (e:_) -> finishFrame (FrameReverted $ errorMsg e)
             in query (PleaseReadEnv varStr cont)
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
@@ -1890,6 +1910,9 @@ cheatActions = Map.fromList
   where
     action s f = (abiKeccak s, f (abiKeccak s))
     errorMsg err = ConcreteBuf $ selector "Error(string)" <> encodeAbiValue (AbiString err)
+    continueOnce cont = do
+      assign #result Nothing
+      cont
     stringToBool s = case s of
       "true" -> Right True
       "True" -> Right True

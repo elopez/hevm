@@ -17,7 +17,8 @@ interface Hevm {
     function stopPrank() external;
     function label(address addr, string calldata label) external;
     function setEnv(string calldata variable, string calldata value) external;
-    function envBool(string calldata variable) external returns (bool);
+    function envBool(string calldata key) external returns (bool);
+    function envBool(string calldata key, string calldata delimiter) external returns (bool[] memory);
 }
 
 contract HasStorage {
@@ -130,12 +131,17 @@ contract CheatCodes is DSTest {
         hevm.setEnv(varname, "False");
         assert(!hevm.envBool(varname));
 
+        hevm.setEnv(varname, "true,True,False,false");
+        bool[] memory result = hevm.envBool(varname, ",");
+        assert(result[0] && result[1] && !result[2] && !result[3]);
+
         hevm.setEnv(varname, "invalid");
-        try hevm.envBool(varname) {
-            assert(false);
-        } catch {
+        try hevm.envBool(varname, ",") returns (bool[] memory) {
             assert(true);
-        }
+        } catch Error(string memory reason) {
+            assert(true);
+        } catch {}
+        assert(true);
     }
 
     function prove_prank() public {
