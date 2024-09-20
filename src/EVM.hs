@@ -1,7 +1,7 @@
 {-# LANGUAGE ImplicitParams #-}
 
 module EVM where
-
+import Debug.Trace
 import Prelude hiding (exponent)
 
 import Optics.Core
@@ -33,6 +33,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Lazy qualified as LS
 import Data.ByteString.Char8 qualified as Char8
+import Data.ByteString.Builder qualified as BSB
 import Data.Either (partitionEithers)
 import Data.Foldable (toList)
 import Data.List (find)
@@ -1663,25 +1664,30 @@ cheatCode = LitAddr $ unsafeInto (keccak' "hevm cheat code")
 
 cheat
   :: (?op :: Word8, VMOps t)
-  => (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord)
+  => Expr EAddr -> (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord) -> [Expr EWord]
   -> EVM t s ()
-cheat (inOffset, inSize) (outOffset, outSize) = do
+cheat context (inOffset, inSize) (outOffset, outSize) xs = do
   vm <- get
   input <- readMemory (Expr.add inOffset (Lit 4)) (Expr.sub inSize (Lit 4))
   calldata <- readMemory inOffset inSize
   abi <- readBytes 4 (Lit 0) <$> readMemory inOffset (Lit 4)
-  pushTrace $ FrameTrace (CallContext cheatCode cheatCode inOffset inSize (Lit 0) (maybeLitWord abi) calldata vm.env.contracts vm.tx.substate)
+  let newContext = CallContext cheatCode context outOffset outSize (Lit 0) (maybeLitWord abi) calldata vm.env.contracts vm.tx.substate
+
+  pushTrace $ FrameTrace newContext
+  next
+  vm1 <- get
+  pushTo #frames $ Frame
+                    { state = vm1.state { stack = xs }
+                    , context = newContext
+                    }
   case maybeLitWord abi of
     Nothing -> partial $ UnexpectedSymbolicArg vm.state.pc (getOpName vm.state) "symbolic cheatcode selector" (wrap [abi])
     Just (unsafeInto -> abi') ->
       case Map.lookup abi' cheatActions of
         Nothing ->
           vmError (BadCheatCode abi')
-        Just action -> do
-            action outOffset outSize input
-            popTrace
-            next
-            push 1
+        Just action ->
+          action outOffset outSize input
 
 type CheatAction t s = Expr EWord -> Expr EWord -> Expr Buf -> EVM t s ()
 
@@ -1702,9 +1708,8 @@ cheatActions = Map.fromList
                           (V.toList strsV)
                   cont bs = do
                     let encoded = ConcreteBuf bs
-                    assign (#state % #returndata) encoded
-                    copyBytesToMemory encoded outSize (Lit 0) outOffset
                     assign #result Nothing
+                    finishFrame (FrameReturned encoded)
                 in query (PleaseDoFFI cmd cont)
               _ -> vmError (BadCheatCode sig)
             _ -> vmError (BadCheatCode sig)
@@ -1714,7 +1719,9 @@ cheatActions = Map.fromList
 
   , action "warp(uint256)" $
       \sig _ _ input -> case decodeStaticArgs 0 1 input of
-        [x]  -> assign (#block % #timestamp) x
+        [x]  -> do
+          assign (#block % #timestamp) x
+          doStop
         _ -> vmError (BadCheatCode sig)
 
   , action "deal(address,uint256)" $
@@ -1723,23 +1730,29 @@ cheatActions = Map.fromList
           forceAddr a "vm.deal: cannot decode target into an address" $ \usr ->
             fetchAccount usr $ \_ -> do
               assign (#env % #contracts % ix usr % #balance) amt
+              doStop
         _ -> vmError (BadCheatCode sig)
 
   , action "assume(bool)" $
       \sig _ _ input -> case decodeStaticArgs 0 1 input of
-        [c] -> modifying #constraints ((:) (PEq (Lit 1) c))
+        [c] -> do
+          modifying #constraints ((:) (PEq (Lit 1) c))
+          doStop
         _ -> vmError (BadCheatCode sig)
 
   , action "roll(uint256)" $
       \sig _ _ input -> case decodeStaticArgs 0 1 input of
-        [x] -> forceConcrete x "cannot roll to a symbolic block number" (assign (#block % #number))
+        [x] -> forceConcrete x "cannot roll to a symbolic block number" $ \block -> do
+          assign (#block % #number) block
+          doStop
         _ -> vmError (BadCheatCode sig)
 
   , action "store(address,bytes32,bytes32)" $
       \sig _ _ input -> case decodeStaticArgs 0 3 input of
         [a, slot, new] -> case wordToAddr a of
-          Just a'@(LitAddr _) -> fetchAccount a' $ \_ ->
+          Just a'@(LitAddr _) -> fetchAccount a' $ \_ -> do
             modifying (#env % #contracts % ix a' % #storage) (writeStorage slot new)
+            doStop
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
@@ -1748,14 +1761,13 @@ cheatActions = Map.fromList
         [a, slot] -> case wordToAddr a of
           Just a'@(LitAddr _) -> fetchAccount a' $ \_ ->
             accessStorage a' slot $ \res -> do
-              assign (#state % #returndata % word256At (Lit 0)) res
               let buf = writeWord (Lit 0) res (ConcreteBuf "")
-              copyBytesToMemory buf (Lit 32) (Lit 0) outOffset
+              finishFrame (FrameReturned buf) -- TODO reivew
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
   , action "sign(uint256,bytes32)" $
-      \sig outOffset _ input -> case decodeStaticArgs 0 2 input of
+      \sig outOffset outSize input -> case decodeStaticArgs 0 2 input of
         [sk, hash] ->
           forceConcrete2 (sk, hash) "cannot sign symbolic data" $ \(sk', hash') -> do
             let (v,r,s) = EVM.Sign.sign hash' (into sk')
@@ -1763,10 +1775,16 @@ cheatActions = Map.fromList
                   AbiTuple (V.fromList
                     [ AbiUInt 8 $ into v
                     , AbiBytes 32 (word256Bytes r)
+                    , Debug.Trace.traceShowId (AbiBytes 32 (word256Bytes s))
                     , AbiBytes 32 (word256Bytes s)
                     ])
-            assign (#state % #returndata) (ConcreteBuf encoded)
-            copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+            --assign (#state % #returndata) (ConcreteBuf encoded)
+            --copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+            let !buf = Debug.Trace.traceShowId $ BSB.toLazyByteString $ BSB.byteStringHex encoded
+            let !ole = Debug.Trace.traceShowId (Lit . unsafeInto . BS.length $ encoded)
+            let !ola = Debug.Trace.traceShowId outOffset
+            let !olx = Debug.Trace.traceShowId outSize 
+            finishFrame (FrameReturned $ ConcreteBuf encoded) -- TODO ??
         _ -> vmError (BadCheatCode sig)
 
   , action "addr(uint256)" $
@@ -1776,16 +1794,16 @@ cheatActions = Map.fromList
           case a of
             Nothing -> vmError (BadCheatCode sig)
             Just address -> do
-              let expAddr = litAddr address
-              assign (#state % #returndata % word256At (Lit 0)) expAddr
               let buf = ConcreteBuf $ word256Bytes (into address)
-              copyBytesToMemory buf (Lit 32) (Lit 0) outOffset
+              finishFrame (FrameReturned buf) -- TODO ??
         _ -> vmError (BadCheatCode sig)
 
   , action "prank(address)" $
       \sig _ _ input -> case decodeStaticArgs 0 1 input of
         [addr]  -> case wordToAddr addr of
-          Just a -> assign (#config % #overrideCaller) (Just a)
+          Just a -> do
+            assign (#config % #overrideCaller) (Just a)
+            doStop
           Nothing -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
@@ -1795,6 +1813,7 @@ cheatActions = Map.fromList
           Just a -> do
             assign (#config % #overrideCaller) (Just a)
             assign (#config % #resetCaller) False
+            doStop
           Nothing -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
@@ -1802,6 +1821,7 @@ cheatActions = Map.fromList
       \_ _ _ _ -> do
           assign (#config % #overrideCaller) Nothing
           assign (#config % #resetCaller) True
+          doStop
 
 
   , action "createFork(string)" $
@@ -1811,9 +1831,8 @@ cheatActions = Map.fromList
             forkId <- length <$> gets (.forks)
             let urlOrAlias = Char8.unpack bytes
             modify' $ \vm -> vm { forks = vm.forks Seq.|> ForkState vm.env vm.block vm.cache urlOrAlias }
-            let encoded = encodeAbiValue $ AbiUInt 256 (fromIntegral forkId)
-            assign (#state % #returndata) (ConcreteBuf encoded)
-            copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+            let encoded = ConcreteBuf $ encodeAbiValue $ AbiUInt 256 (fromIntegral forkId)
+            finishFrame (FrameReturned encoded)
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
@@ -1843,6 +1862,7 @@ cheatActions = Map.fromList
                         ) vm.currentFork  vm.forks
                       , currentFork = forkId'
                       }
+                  doStop
               Nothing ->
                 vmError (NonexistentFork forkId')
         _ -> vmError (BadCheatCode sig)
@@ -1850,15 +1870,15 @@ cheatActions = Map.fromList
   , action "activeFork()" $
       \_ outOffset _ _ -> do
         vm <- get
-        let encoded = encodeAbiValue $ AbiUInt 256 (fromIntegral vm.currentFork)
-        assign (#state % #returndata) (ConcreteBuf encoded)
-        copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+        let encoded = ConcreteBuf $ encodeAbiValue $ AbiUInt 256 (fromIntegral vm.currentFork)
+        finishFrame (FrameReturned encoded)        
 
   , action "label(address,string)" $
       \sig _ _ input -> case decodeBuf [AbiAddressType, AbiStringType] input of
         CAbi valsArr -> case valsArr of
-          [AbiAddress addr, AbiString label] ->
+          [AbiAddress addr, AbiString label] -> do
             #labels %= Map.insert addr (decodeUtf8 label)
+            doStop
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
 
@@ -1868,7 +1888,7 @@ cheatActions = Map.fromList
           [AbiString variable, AbiString value] -> let
             varStr = unpack $ decodeUtf8 variable
             varVal = unpack $ decodeUtf8 value
-            cont = continueOnce noop
+            cont = continueOnce doStop
             in query (PleaseSetEnv varStr varVal cont)
           _ -> vmError (BadCheatCode sig)
         _ -> vmError (BadCheatCode sig)
@@ -1881,9 +1901,8 @@ cheatActions = Map.fromList
             cont value = continueOnce $ do
               case stringToBool value of
                 Right v -> do
-                  let encoded = encodeAbiValue $ AbiBool v
-                  assign (#state % #returndata) (ConcreteBuf encoded)
-                  copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+                  let encoded = ConcreteBuf $ encodeAbiValue $ AbiBool v
+                  finishFrame (FrameReturned encoded)
                 Left e -> finishFrame (FrameReverted $ errorMsg e)
             in query (PleaseReadEnv varStr cont)
           _ -> vmError (BadCheatCode sig)
@@ -1899,9 +1918,8 @@ cheatActions = Map.fromList
               let (errors, values) = partitionEithers $ map stringToBool $ splitOn delimStr value
               case errors of
                 [] -> do
-                  let encoded = encodeAbiValue $ AbiTuple $ V.fromList $ [AbiArrayDynamic AbiBoolType $ V.fromList $ map AbiBool values]
-                  assign (#state % #returndata) (ConcreteBuf encoded)
-                  copyBytesToMemory (ConcreteBuf encoded) (Lit . unsafeInto . BS.length $ encoded) (Lit 0) outOffset
+                  let encoded = ConcreteBuf $ encodeAbiValue $ AbiTuple $ V.fromList $ [AbiArrayDynamic AbiBoolType $ V.fromList $ map AbiBool values]
+                  finishFrame (FrameReturned encoded)
                 (e:_) -> finishFrame (FrameReverted $ errorMsg e)
             in query (PleaseReadEnv varStr cont)
           _ -> vmError (BadCheatCode sig)
@@ -1909,10 +1927,11 @@ cheatActions = Map.fromList
   ]
   where
     action s f = (abiKeccak s, f (abiKeccak s))
-    errorMsg err = ConcreteBuf $ selector "Error(string)" <> encodeAbiValue (AbiString err)
+    errorMsg err = ConcreteBuf $ selector "Error(string)" <> encodeAbiValue (AbiTuple $ V.fromList $ [AbiString err])
     continueOnce cont = do
       assign #result Nothing
       cont
+    doStop = finishFrame (FrameReturned mempty)
     stringToBool s = case s of
       "true" -> Right True
       "True" -> Right True
@@ -1942,8 +1961,7 @@ delegateCall this gasGiven xTo xContext xValue xInOffset xInSize xOutOffset xOut
           \(xTo', xContext') ->
             precompiledContract this gasGiven xTo' xContext' xValue xInOffset xInSize xOutOffset xOutSize xs
   | xTo == cheatCode = do
-      assign (#state % #stack) xs
-      cheat (xInOffset, xInSize) (xOutOffset, xOutSize)
+      cheat xContext (xInOffset, xInSize) (xOutOffset, xOutSize) xs
   | otherwise =
       callChecks this gasGiven xContext xTo xValue xInOffset xInSize xOutOffset xOutSize xs $
         \xGas -> do
