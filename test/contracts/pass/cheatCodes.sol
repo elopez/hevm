@@ -136,12 +136,21 @@ contract CheatCodes is DSTest {
         assert(result[0] && result[1] && !result[2] && !result[3]);
 
         hevm.setEnv(varname, "invalid");
-        try hevm.envBool(varname, ",") returns (bool[] memory) {
-            assert(true);
+        try hevm.envBool(varname) returns (bool) {
+            assert(false);
         } catch Error(string memory reason) {
-            assert(true);
-        } catch {}
-        assert(true);
+            assertEq(reason, "invalid value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
+
+        try hevm.envBool(varname, ",") returns (bool[] memory) {
+            assert(false);
+        } catch Error(string memory reason) {
+            assertEq(reason, "invalid value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
     }
 
     function prove_prank() public {
