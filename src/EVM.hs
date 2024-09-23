@@ -1,4 +1,5 @@
 {-# LANGUAGE ImplicitParams #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module EVM where
 import Prelude hiding (exponent)
@@ -21,6 +22,7 @@ import EVM.Types
 import EVM.Types qualified as Expr (Expr(Gas))
 import EVM.Sign qualified
 import EVM.Concrete qualified as Concrete
+import EVM.CheatsTH
 
 import Control.Monad (unless, when)
 import Control.Monad.ST (ST)
@@ -1867,29 +1869,23 @@ cheatActions = Map.fromList
           in query (PleaseSetEnv varStr varVal cont)
         _ -> vmError (BadCheatCode sig)
 
-  , action "envBool(string)" $
-      \sig input -> case decodeBuf [AbiStringType] input of
-        CAbi [AbiString variable] -> let
-          varStr = toString variable
-          cont value = continueOnce $ do
-            either' (stringToBool value) frameRevert $ \v -> do
-              frameReturn $ AbiBool v
-          in query (PleaseReadEnv varStr cont)
-        _ -> vmError (BadCheatCode sig)
+  -- Single-value environment read cheat actions
+  , $(envReadSingleCheat "envBool(string)") AbiBool stringToBool
+  , $(envReadSingleCheat "envUint(string)") (AbiUInt 256) (const $ Right $ 0)
+  , $(envReadSingleCheat "envInt(string)") (AbiInt 256) (const $ Right $ 0)
+  , $(envReadSingleCheat "envAddress(string)") AbiAddress (const $ Right $ Addr 0)
+  , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) (const $ Left "TODO")
+  , $(envReadSingleCheat "envString(string)") AbiString (const $ Left "TODO")
+  , $(envReadSingleCheat "envBytes(string)") AbiBytesDynamic (const $ Left "TODO")
 
-  , action "envBool(string,string)" $
-      \sig input -> case decodeBuf [AbiStringType, AbiStringType] input of
-        CAbi [AbiString variable, AbiString delimiter] -> let
-          (varStr, delimStr) = (toString variable, toString delimiter)
-          cont value = continueOnce $ do
-            let (errors, values) = partitionEithers $ map stringToBool $ splitOn delimStr value
-            case errors of
-              [] -> do
-                let result = AbiTuple $ V.fromList [AbiArrayDynamic AbiBoolType $ V.fromList $ map AbiBool values]
-                frameReturn result
-              (e:_) -> frameRevert e
-          in query (PleaseReadEnv varStr cont)
-        _ -> vmError (BadCheatCode sig)
+  -- Multi-value environment read cheat actions
+  , $(envReadMultipleCheat "envBool(string,string)" AbiBoolType) stringToBool
+  , $(envReadMultipleCheat "envUint(string,string)" $ AbiUIntType 256) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envString(string,string)" AbiStringType) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envBytes(string,string)" AbiBytesDynamicType) (const $ Left "TODO")
   ]
   where
     action s f = (abiKeccak s, f (abiKeccak s))
