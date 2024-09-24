@@ -158,6 +158,7 @@ makeVm o = do
     , forks = Seq.singleton (ForkState env block cache "")
     , currentFork = 0
     , labels = mempty
+    , osEnv = mempty
     }
     where
     env = Env
@@ -1710,7 +1711,7 @@ cheatActions = Map.fromList
                         (V.toList strsV)
                 cont bs = continueOnce $ do
                   frameReturnBuf bs
-              in query (PleaseDoFFI cmd cont)
+              in query (PleaseDoFFI cmd vm.osEnv cont)
             _ -> vmError (BadCheatCode sig)
         else
           let msg = "ffi disabled: run again with --ffi if you want to allow tests to call external scripts"
@@ -1866,10 +1867,10 @@ cheatActions = Map.fromList
 
   , action "setEnv(string,string)" $
       \sig input -> case decodeBuf [AbiStringType, AbiStringType] input of
-        CAbi [AbiString variable, AbiString value] -> let
-          (varStr, varVal) = (toString variable, toString value)
-          cont = continueOnce doStop
-          in query (PleaseSetEnv varStr varVal cont)
+        CAbi [AbiString variable, AbiString value] -> do
+          let (varStr, varVal) = (toString variable, toString value)
+          #osEnv %= Map.insert varStr varVal
+          doStop
         _ -> vmError (BadCheatCode sig)
 
   -- Single-value environment read cheat actions

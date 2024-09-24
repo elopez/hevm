@@ -6,6 +6,7 @@ module EVM.CheatsTH where
 import EVM.ABI
 
 import Data.ByteString.Char8 (pack)
+import Data.Map.Strict qualified as Map
 import Data.Vector qualified as V
 
 import Language.Haskell.TH
@@ -35,7 +36,11 @@ envReadSingleCheat sigString = [|
                     cont value = continueOnce $ do
                         either' (convert value) frameRevert $ \v -> do
                             frameReturn $ wrap v
-                    in query (PleaseReadEnv varStr cont)
+                    in do 
+                        vm <- get
+                        case Map.lookup varStr vm.osEnv of
+                            Just v -> cont v
+                            Nothing -> query (PleaseReadEnv varStr cont)
                 _ -> vmError (BadCheatCode sig)
     |]
     where
@@ -55,7 +60,11 @@ envReadMultipleCheat sigString arrType = [|
                                 let result = AbiTuple $ V.fromList [AbiArrayDynamic $arrTypeL $ V.fromList $ map $wrapL values]
                                 frameReturn result
                             (e:_) -> frameRevert e
-                    in query (PleaseReadEnv varStr cont)
+                    in do 
+                        vm <- get
+                        case Map.lookup varStr vm.osEnv of
+                            Just v -> cont v
+                            Nothing -> query (PleaseReadEnv varStr cont)
                 _ -> vmError (BadCheatCode sig)
     |]
     where
