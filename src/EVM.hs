@@ -31,6 +31,7 @@ import Data.Bits (FiniteBits, countLeadingZeros, finiteBitSize)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as BS16
 import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Lazy qualified as LS
 import Data.ByteString.Char8 qualified as Char8
@@ -38,7 +39,7 @@ import Data.DoubleWord (Int256, Word256)
 import Data.Either (partitionEithers)
 import Data.Either.Extra (maybeToEither)
 import Data.Foldable (toList)
-import Data.List (find)
+import Data.List (find, isPrefixOf)
 import Data.List.Split (splitOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -1879,8 +1880,8 @@ cheatActions = Map.fromList
   , $(envReadSingleCheat "envInt(string)") (AbiInt 256) stringToInt256
   , $(envReadSingleCheat "envAddress(string)") AbiAddress stringToAddress
   , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) stringToBytes32
-  , $(envReadSingleCheat "envString(string)") AbiString (const $ Left "TODO")
-  , $(envReadSingleCheat "envBytes(string)") AbiBytesDynamic (const $ Left "TODO")
+  , $(envReadSingleCheat "envString(string)") (\x -> AbiTuple $ V.fromList [AbiString x]) stringToByteString
+  , $(envReadSingleCheat "envBytes(bytes)") (\x -> AbiTuple $ V.fromList [AbiBytesDynamic x]) stringHexToByteString
 
   -- Multi-value environment read cheat actions
   , $(envReadMultipleCheat "envBool(string,string)" AbiBoolType) stringToBool
@@ -1888,8 +1889,8 @@ cheatActions = Map.fromList
   , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) stringToInt256
   , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) stringToAddress
   , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) stringToBytes32
-  , $(envReadMultipleCheat "envString(string,string)" AbiStringType) (const $ Left "TODO")
-  , $(envReadMultipleCheat "envBytes(string,string)" AbiBytesDynamicType) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envString(string,string)" AbiStringType) stringToByteString
+  , $(envReadMultipleCheat "envBytes(bytes,bytes)" AbiBytesDynamicType) stringHexToByteString
   ]
   where
     action s f = (abiKeccak s, f (abiKeccak s))
@@ -1909,6 +1910,7 @@ cheatActions = Map.fromList
       cont
     doStop = finishFrame (FrameReturned mempty)
     toString = unpack . decodeUtf8
+    strip0x s = if "0x" `isPrefixOf` s then drop 2 s else s
     stringToBool :: String -> Either ByteString Bool
     stringToBool s = case s of
       "true" -> Right True
@@ -1924,6 +1926,10 @@ cheatActions = Map.fromList
     stringToAddress s = fmap Addr $ maybeToEither "invalid address value" $ readMaybe s
     stringToBytes32 :: String -> Either ByteString ByteString
     stringToBytes32 s = fmap word256Bytes $ maybeToEither "invalid bytes32 value" $ readMaybe s
+    stringToByteString :: String -> Either ByteString ByteString
+    stringToByteString = Right . Char8.pack
+    stringHexToByteString :: String -> Either ByteString ByteString
+    stringHexToByteString s = either (const $ Left "invalid bytes value") Right $ BS16.decodeBase16Untyped . Char8.pack . strip0x $ s
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case
