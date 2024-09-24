@@ -19,6 +19,10 @@ interface Hevm {
     function setEnv(string calldata variable, string calldata value) external;
     function envBool(string calldata key) external returns (bool);
     function envBool(string calldata key, string calldata delimiter) external returns (bool[] memory);
+    function envUint(string calldata key) external returns (uint256 value);
+    function envUint(string calldata key, string calldata delimiter) external returns (uint256[] memory values);
+    function envInt(string calldata key) external returns (int256 value);
+    function envInt(string calldata key, string calldata delimiter) external returns (int256[] memory values);
 }
 
 contract HasStorage {
@@ -148,6 +152,62 @@ contract CheatCodes is DSTest {
             assert(false);
         } catch Error(string memory reason) {
             assertEq(reason, "invalid value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
+    }
+
+    function prove_envUint() public {
+        string memory varname = "ENV_UINT_TEST";
+
+        hevm.setEnv(varname, "0");
+        assertEq(hevm.envUint(varname), 0);
+        hevm.setEnv(varname, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        assertEq(hevm.envUint(varname), type(uint256).max);
+        hevm.setEnv(varname, "1234");
+        assertEq(hevm.envUint(varname), 1234);
+
+
+        hevm.setEnv(varname, "0,115792089237316195423570985008687907853269984665640564039457584007913129639935,0x0000000000000000000000000000000000000000000000000000000000000000");
+        uint[] memory result = hevm.envUint(varname, ",");
+        assertEq(result.length, 3);
+        assertEq(result[0], 0);
+        assertEq(result[1], type(uint256).max);
+        assertEq(result[2], 0);
+
+        hevm.setEnv(varname, "invalid");
+        try hevm.envUint(varname) returns (uint) {
+            assert(false);
+        } catch Error(string memory reason) {
+            assertEq(reason, "invalid W256 value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
+    }
+
+    function prove_envInt() public {
+        string memory varname = "ENV_INT_TEST";
+
+        hevm.setEnv(varname, "0");
+        assertEq(hevm.envInt(varname), 0);
+        hevm.setEnv(varname, "0x8000000000000000000000000000000000000000000000000000000000000000");
+        assertEq(hevm.envInt(varname), type(int256).min);
+        hevm.setEnv(varname, "-1234");
+        assertEq(hevm.envInt(varname), -1234);
+
+
+        hevm.setEnv(varname, "0,115792089237316195423570985008687907853269984665640564039457584007913129639935,0x0000000000000000000000000000000000000000000000000000000000000000");
+        int[] memory result = hevm.envInt(varname, ",");
+        assertEq(result.length, 3);
+        assertEq(result[0], 0);
+        assertEq(result[1], -1);
+        assertEq(result[2], 0);
+
+        hevm.setEnv(varname, "invalid");
+        try hevm.envInt(varname) returns (int) {
+            assert(false);
+        } catch Error(string memory reason) {
+            assertEq(reason, "invalid Int256 value");
         } catch (bytes memory reason) {
             assert(false);
         }

@@ -34,7 +34,9 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Lazy qualified as LS
 import Data.ByteString.Char8 qualified as Char8
+import Data.DoubleWord (Int256, Word256)
 import Data.Either (partitionEithers)
+import Data.Either.Extra (maybeToEither)
 import Data.Foldable (toList)
 import Data.List (find)
 import Data.List.Split (splitOn)
@@ -55,6 +57,7 @@ import Data.Vector.Storable.Mutable qualified as SV
 import Data.Vector.Unboxed qualified as VUnboxed
 import Data.Vector.Unboxed.Mutable qualified as VUnboxed.Mutable
 import Data.Word (Word8, Word32, Word64)
+import Text.Read (readMaybe)
 import Witch (into, tryFrom, unsafeInto)
 
 import Crypto.Hash (Digest, SHA256, RIPEMD160)
@@ -1871,8 +1874,8 @@ cheatActions = Map.fromList
 
   -- Single-value environment read cheat actions
   , $(envReadSingleCheat "envBool(string)") AbiBool stringToBool
-  , $(envReadSingleCheat "envUint(string)") (AbiUInt 256) (const $ Right $ 0)
-  , $(envReadSingleCheat "envInt(string)") (AbiInt 256) (const $ Right $ 0)
+  , $(envReadSingleCheat "envUint(string)") (AbiUInt 256) stringToWord256
+  , $(envReadSingleCheat "envInt(string)") (AbiInt 256) stringToInt256
   , $(envReadSingleCheat "envAddress(string)") AbiAddress (const $ Right $ Addr 0)
   , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) (const $ Left "TODO")
   , $(envReadSingleCheat "envString(string)") AbiString (const $ Left "TODO")
@@ -1880,8 +1883,8 @@ cheatActions = Map.fromList
 
   -- Multi-value environment read cheat actions
   , $(envReadMultipleCheat "envBool(string,string)" AbiBoolType) stringToBool
-  , $(envReadMultipleCheat "envUint(string,string)" $ AbiUIntType 256) (const $ Left "TODO")
-  , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envUint(string,string)" $ AbiUIntType 256) stringToWord256
+  , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) stringToInt256
   , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) (const $ Left "TODO")
   , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) (const $ Left "TODO")
   , $(envReadMultipleCheat "envString(string,string)" AbiStringType) (const $ Left "TODO")
@@ -1911,6 +1914,10 @@ cheatActions = Map.fromList
       "false" -> Right False
       "False" -> Right False
       _ -> Left "invalid value"
+    stringToWord256 :: String -> Either ByteString Word256
+    stringToWord256 s = maybeToEither "invalid W256 value" $ readMaybe s
+    stringToInt256 :: String -> Either ByteString Int256
+    stringToInt256 s = maybeToEither "invalid Int256 value" $ readMaybe s
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case

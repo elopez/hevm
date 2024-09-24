@@ -15,6 +15,16 @@ import Language.Haskell.TH.Syntax
 liftByteString :: String -> Q Exp
 liftByteString txt = AppE (VarE 'pack) <$> lift txt
 
+liftAbiType :: AbiType -> Q Exp
+liftAbiType AbiBoolType = [| AbiBool |]
+liftAbiType (AbiUIntType n) = [| AbiUInt $(lift n) |]
+liftAbiType (AbiIntType n) = [| AbiInt $(lift n) |]
+liftAbiType AbiAddressType = [| AbiAddress |]
+liftAbiType (AbiBytesType n) = [| AbiBytes $(lift n) |]
+liftAbiType AbiStringType = [| AbiString |]
+liftAbiType AbiBytesDynamicType = [| AbiBytesDynamic |]
+liftAbiType _ = error "unimplemented"
+
 envReadSingleCheat :: String -> Q Exp
 envReadSingleCheat sigString = [|
     \wrap convert ->
@@ -51,12 +61,4 @@ envReadMultipleCheat sigString arrType = [|
     where
         sigL = liftByteString sigString
         arrTypeL = liftData arrType
-        wrapL = case arrType of
-            AbiBoolType -> [| AbiBool |]
-            AbiUIntType n -> [| AbiUInt $(lift n) |]
-            AbiIntType n -> [| AbiInt $(lift n) |]
-            AbiAddressType -> [| AbiAddress |]
-            AbiBytesType n -> [| AbiBytes $(lift n) |]
-            AbiStringType -> [| AbiString |]
-            AbiBytesDynamicType -> [| AbiBytesDynamic |]
-            _ -> error "unimplemented"
+        wrapL = liftAbiType arrType
