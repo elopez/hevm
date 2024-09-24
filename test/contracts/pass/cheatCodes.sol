@@ -23,6 +23,8 @@ interface Hevm {
     function envUint(string calldata key, string calldata delimiter) external returns (uint256[] memory values);
     function envInt(string calldata key) external returns (int256 value);
     function envInt(string calldata key, string calldata delimiter) external returns (int256[] memory values);
+    function envAddress(string calldata key) external returns (address value);
+    function envAddress(string calldata key, string calldata delimiter) external returns (address[] memory values);
 }
 
 contract HasStorage {
@@ -208,6 +210,33 @@ contract CheatCodes is DSTest {
             assert(false);
         } catch Error(string memory reason) {
             assertEq(reason, "invalid Int256 value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
+    }
+
+    function prove_envAddress() public {
+        string memory varname = "ENV_ADDR_TEST";
+
+        hevm.setEnv(varname, "0");
+        assertEq(hevm.envAddress(varname), address(0));
+        hevm.setEnv(varname, "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D");
+        assertEq(hevm.envAddress(varname), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+        hevm.setEnv(varname, "0x1000");
+        assertEq(hevm.envAddress(varname), address(0x1000));
+
+
+        hevm.setEnv(varname, "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D,0x0000000000000000000000000000000000000000");
+        address[] memory result = hevm.envAddress(varname, ",");
+        assertEq(result.length, 2);
+        assertEq(result[0], 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+        assertEq(result[1], 0x0000000000000000000000000000000000000000);
+
+        hevm.setEnv(varname, "0xinvalid");
+        try hevm.envAddress(varname) returns (address) {
+            assert(false);
+        } catch Error(string memory reason) {
+            assertEq(reason, "invalid address value");
         } catch (bytes memory reason) {
             assert(false);
         }

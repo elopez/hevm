@@ -1876,7 +1876,7 @@ cheatActions = Map.fromList
   , $(envReadSingleCheat "envBool(string)") AbiBool stringToBool
   , $(envReadSingleCheat "envUint(string)") (AbiUInt 256) stringToWord256
   , $(envReadSingleCheat "envInt(string)") (AbiInt 256) stringToInt256
-  , $(envReadSingleCheat "envAddress(string)") AbiAddress (const $ Right $ Addr 0)
+  , $(envReadSingleCheat "envAddress(string)") AbiAddress stringToAddress
   , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) (const $ Left "TODO")
   , $(envReadSingleCheat "envString(string)") AbiString (const $ Left "TODO")
   , $(envReadSingleCheat "envBytes(string)") AbiBytesDynamic (const $ Left "TODO")
@@ -1885,7 +1885,7 @@ cheatActions = Map.fromList
   , $(envReadMultipleCheat "envBool(string,string)" AbiBoolType) stringToBool
   , $(envReadMultipleCheat "envUint(string,string)" $ AbiUIntType 256) stringToWord256
   , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) stringToInt256
-  , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) stringToAddress
   , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) (const $ Left "TODO")
   , $(envReadMultipleCheat "envString(string,string)" AbiStringType) (const $ Left "TODO")
   , $(envReadMultipleCheat "envBytes(string,string)" AbiBytesDynamicType) (const $ Left "TODO")
@@ -1908,6 +1908,7 @@ cheatActions = Map.fromList
       cont
     doStop = finishFrame (FrameReturned mempty)
     toString = unpack . decodeUtf8
+    stringToBool :: String -> Either ByteString Bool
     stringToBool s = case s of
       "true" -> Right True
       "True" -> Right True
@@ -1918,6 +1919,8 @@ cheatActions = Map.fromList
     stringToWord256 s = maybeToEither "invalid W256 value" $ readMaybe s
     stringToInt256 :: String -> Either ByteString Int256
     stringToInt256 s = maybeToEither "invalid Int256 value" $ readMaybe s
+    stringToAddress :: String -> Either ByteString Addr
+    stringToAddress s = either Left (Right . Addr) $ maybeToEither "invalid address value" $ readMaybe s
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case
