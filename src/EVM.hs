@@ -1921,9 +1921,9 @@ cheatActions = Map.fromList
     stringToInt256 :: String -> Either ByteString Int256
     stringToInt256 s = maybeToEither "invalid Int256 value" $ readMaybe s
     stringToAddress :: String -> Either ByteString Addr
-    stringToAddress s = either Left (Right . Addr) $ maybeToEither "invalid address value" $ readMaybe s
+    stringToAddress s = fmap Addr $ maybeToEither "invalid address value" $ readMaybe s
     stringToBytes32 :: String -> Either ByteString ByteString
-    stringToBytes32 s = either Left (Right . word256Bytes) $ maybeToEither "invalid bytes32 value" $ readMaybe s
+    stringToBytes32 s = fmap word256Bytes $ maybeToEither "invalid bytes32 value" $ readMaybe s
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case
