@@ -1877,7 +1877,7 @@ cheatActions = Map.fromList
   , $(envReadSingleCheat "envUint(string)") (AbiUInt 256) stringToWord256
   , $(envReadSingleCheat "envInt(string)") (AbiInt 256) stringToInt256
   , $(envReadSingleCheat "envAddress(string)") AbiAddress stringToAddress
-  , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) (const $ Left "TODO")
+  , $(envReadSingleCheat "envBytes32(string)") (AbiBytes 32) stringToBytes32
   , $(envReadSingleCheat "envString(string)") AbiString (const $ Left "TODO")
   , $(envReadSingleCheat "envBytes(string)") AbiBytesDynamic (const $ Left "TODO")
 
@@ -1886,7 +1886,7 @@ cheatActions = Map.fromList
   , $(envReadMultipleCheat "envUint(string,string)" $ AbiUIntType 256) stringToWord256
   , $(envReadMultipleCheat "envInt(string,string)" $ AbiIntType 256) stringToInt256
   , $(envReadMultipleCheat "envAddress(string,string)" AbiAddressType) stringToAddress
-  , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) (const $ Left "TODO")
+  , $(envReadMultipleCheat "envBytes32(string,string)" $ AbiBytesType 32) stringToBytes32
   , $(envReadMultipleCheat "envString(string,string)" AbiStringType) (const $ Left "TODO")
   , $(envReadMultipleCheat "envBytes(string,string)" AbiBytesDynamicType) (const $ Left "TODO")
   ]
@@ -1921,6 +1921,8 @@ cheatActions = Map.fromList
     stringToInt256 s = maybeToEither "invalid Int256 value" $ readMaybe s
     stringToAddress :: String -> Either ByteString Addr
     stringToAddress s = either Left (Right . Addr) $ maybeToEither "invalid address value" $ readMaybe s
+    stringToBytes32 :: String -> Either ByteString ByteString
+    stringToBytes32 s = either Left (Right . word256Bytes) $ maybeToEither "invalid bytes32 value" $ readMaybe s
 
 -- * General call implementation ("delegateCall")
 -- note that the continuation is ignored in the precompile case

@@ -25,6 +25,8 @@ interface Hevm {
     function envInt(string calldata key, string calldata delimiter) external returns (int256[] memory values);
     function envAddress(string calldata key) external returns (address value);
     function envAddress(string calldata key, string calldata delimiter) external returns (address[] memory values);
+    function envBytes32(string calldata key) external returns (bytes32 value);
+    function envBytes32(string calldata key, string calldata delimiter) external returns (bytes32[] memory values);
 }
 
 contract HasStorage {
@@ -139,6 +141,7 @@ contract CheatCodes is DSTest {
 
         hevm.setEnv(varname, "true,True,False,false");
         bool[] memory result = hevm.envBool(varname, ",");
+        assertEq(result.length, 4);
         assert(result[0] && result[1] && !result[2] && !result[3]);
 
         hevm.setEnv(varname, "invalid");
@@ -237,6 +240,34 @@ contract CheatCodes is DSTest {
             assert(false);
         } catch Error(string memory reason) {
             assertEq(reason, "invalid address value");
+        } catch (bytes memory reason) {
+            assert(false);
+        }
+    }
+
+    function prove_envBytes32() public {
+        string memory varname = "ENV_BYTES32_TEST";
+
+        hevm.setEnv(varname, "0");
+        assertEq(hevm.envBytes32(varname), 0);
+        hevm.setEnv(varname, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        assertEq(hevm.envBytes32(varname), 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        hevm.setEnv(varname, "1234");
+        assertEq(hevm.envBytes32(varname), bytes32(uint(1234)));
+
+
+        hevm.setEnv(varname, "0,0x7109709ECfa91a80626fF3989D68f67F5b1DD12D,0x0000000000000000000000000000000000000000000000000000000000000000");
+        bytes32[] memory result = hevm.envBytes32(varname, ",");
+        assertEq(result.length, 3);
+        assertEq(result[0], 0);
+        assertEq(result[1], 0x0000000000000000000000007109709ECfa91a80626fF3989D68f67F5b1DD12D);
+        assertEq(result[2], 0);
+
+        hevm.setEnv(varname, "invalid");
+        try hevm.envBytes32(varname) returns (bytes32) {
+            assert(false);
+        } catch Error(string memory reason) {
+            assertEq(reason, "invalid bytes32 value");
         } catch (bytes memory reason) {
             assert(false);
         }
