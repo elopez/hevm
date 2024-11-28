@@ -53,13 +53,13 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       # cabal complains if we don't do this...
       - name: cabal update
-        run: nix-shell --pure --command "cabal update"
+        run: nix develop --command bash -c "cabal update"
       # can't be run in nix build due to network usage
       - name: run rpc tests
-        run: nix-shell --pure --command "cabal --active-repositories=:none run rpc-tests"
+        run: nix develop --command bash -c "cabal --active-repositories=:none run rpc-tests"
       # if we run this in nix build we often get killed due to oom in ci
       - name: run ethereum tests
-        run: nix-shell --pure --command "cabal --active-repositories=:none run ethereum-tests"
+        run: nix develop --command bash -c "cabal --active-repositories=:none run ethereum-tests"
 
   build-windows-bitwuzla:
     name: bitwuzla-build (win64 target)
@@ -75,9 +75,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinning to a version in June 2024, so in case a build fails, our CI doesn't fail
+          version: nightly-5ac78a9cd4b94dc53d1fe5e0f42372b28b5a7559
+      - run: |
+          echo FOUNDRY_PATH="$(dirname "$(which forge)")" >> "$GITHUB_ENV"
+        shell: bash
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: CLANG64
+          msystem: MINGW64
           path-type: minimal
           update: true
           install: >-
@@ -105,13 +111,16 @@ jobs:
       - name: Extract GHC & Cabal paths
         run: |
           HASKELL_PATHS="$(cygpath -u "$GHC_PATH"):$(cygpath -u "$CABAL_PATH")"
+          HASKELL_MINGW_PATH="$(cygpath -u "$GHC_PATH/../mingw")"
           echo "HASKELL_PATHS=$HASKELL_PATHS" >> "$GITHUB_ENV"
+          echo "HASKELL_MINGW_PATH=$HASKELL_MINGW_PATH" >> "$GITHUB_ENV"
         env:
           GHC_PATH: ${{ steps.setup.outputs.ghc-path }}
           CABAL_PATH: ${{ steps.setup.outputs.cabal-path }}
 
       - name: build and install c dependencies
         run: |
+          export PATH="$HASKELL_MINGW_PATH/bin:$PATH"
           echo "::group::Installing libsecp256k1"
           ./.github/scripts/install-libsecp256k1.sh
           echo "::endgroup::"
@@ -122,9 +131,11 @@ jobs:
         run: |
           export PATH="$HASKELL_PATHS:$PATH"
           cabal configure --disable-documentation --enable-executable-static --enable-executable-stripping \
+            --extra-include-dirs="$(cygpath -m "$HASKELL_MINGW_PATH/x86_64-w64-mingw32/include")" --extra-lib-dirs="$(cygpath -m "$HASKELL_MINGW_PATH/x86_64-w64-mingw32/lib")" \
+            --extra-include-dirs="$(cygpath -m "$HASKELL_MINGW_PATH/include")" --extra-lib-dirs="$(cygpath -m "$HASKELL_MINGW_PATH/lib")" \
+            --extra-include-dirs="D:/a/_temp/msys64/mingw64/include" --extra-lib-dirs="D:/a/_temp/msys64/mingw64/lib" \
             --extra-include-dirs="$HOME/.local/include" --extra-lib-dirs="$HOME/.local/lib" \
-            --extra-include-dirs="D:/a/_temp/msys64/clang64/include" --extra-lib-dirs="D:/a/_temp/msys64/clang64/lib" \
-            --ghc-options=-pgml=D:/a/_temp/msys64/clang64/bin/clang.exe -fstatic-secp256k1
+            --ghc-options=-pgml="$(cygpath -m "$HASKELL_MINGW_PATH/bin/clang.exe")" -fstatic-secp256k1 --constraint="zlib +bundled-c-zlib"
           cabal build --dry-run
           # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
@@ -155,12 +166,12 @@ jobs:
       - name: build hevm
         run: |
           export PATH="$HASKELL_PATHS:$PATH"
-          cabal build
+          cabal build exe:hevm test ethereum-tests rpc-tests
           mkdir result && cp "$(cabal list-bin hevm)" result/hevm.exe
           strip result/hevm.exe
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: hevm-windows-x64
           path: result/hevm.exe
@@ -168,13 +179,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ethereum/solidity
-          ref: 1c8745c54a239d20b6fb0f79a8bd2628d779b27e
+          ref: 8a97fa7a1db1ec509221ead6fea6802c684ee887
           path: ethereum-solidity
 
       - uses: actions/checkout@v4
         with:
           repository: ethereum/tests
-          ref: v12.2
+          ref: v13
           path: ethereum-tests
 
       - uses: actions/checkout@v4
@@ -201,7 +212,7 @@ jobs:
           echo CVC5_PATH="$PWD/cvc5-Win64-static/bin" >> "$GITHUB_ENV"
           # solc
           mkdir solc
-          curl --retry 5 -fsSL https://github.com/ethereum/solidity/releases/download/v0.8.21/solc-windows.exe -o solc/solc.exe
+          curl --retry 5 -fsSL https://github.com/ethereum/solidity/releases/download/v0.8.26/solc-windows.exe -o solc/solc.exe
           echo DAPP_SOLC="$PWD/solc/solc.exe" >> "$GITHUB_ENV"
           echo DAPP_SOLC_PATH="$PWD/solc/" >> "$GITHUB_ENV"
           # repos
@@ -213,12 +224,12 @@ jobs:
 
       - name: run tests
         run: |
-          export PATH="$EVM_PATH:$CVC5_PATH:$BITWUZLA_PATH:$DAPP_SOLC_PATH:$HASKELL_PATHS:$PATH"
+          export PATH="$EVM_PATH:$CVC5_PATH:$BITWUZLA_PATH:$DAPP_SOLC_PATH:$FOUNDRY_PATH:$HASKELL_PATHS:$PATH"
           cabal run test
 
       - name: run rpc tests
         run: |
-          export PATH="$HASKELL_PATHS:$PATH"
+          export PATH="$FOUNDRY_PATH:$HASKELL_PATHS:$PATH"
           cabal run rpc-tests
 
       - name: run ethereum tests
