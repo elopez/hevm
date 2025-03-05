@@ -169,7 +169,9 @@ getMultiSol smt2@(SMT2 cmds cexvars _) multiSol r inst availableInstances fileCo
   where
     createHexValue k =
        let hexString = concat (replicate k "ff")
-       in fst . head $ readHex hexString
+       in case readHex hexString of
+            [(n, _)] -> n
+            _ -> internalError "error constructing mask"
     subRun :: (MonadIO m, ReadConfig m) => [W256] -> SMT2 -> Text -> m ()
     subRun vals fullSmt sat = do
       conf <- readConfig
