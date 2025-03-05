@@ -452,7 +452,7 @@ enforceGasOrder ps = SMT2 (["; gas ordering"] <> order indices) mempty mempty
       ["(assert (bvugt gas_" <> (fromString . show $ x) <> " gas_" <> (fromString . show $ y) <> "))"]
     consecutivePairs :: [Int] -> [(Int, Int)]
     consecutivePairs [] = []
-    consecutivePairs l = zip l (tail l)
+    consecutivePairs l = zip l (drop 1 l)
     indices :: [Int] = nubInt $ concatMap (foldProp go mempty) ps
     go :: Expr a -> [Int]
     go e = case e of

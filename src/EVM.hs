@@ -3020,23 +3020,23 @@ instance VMOps Symbolic where
     query $ PleaseGetSols ewordExpr numBytes pathconds $ \case
       Just concVals -> do
         assign #result Nothing
-        case (length concVals) of
+        case concVals of
           -- zero solutions means that we are in a branch that's not possible. Revert.
           -- TODO: stop execution of the EVM completely
-          0 -> finishFrame (FrameReverted (ConcreteBuf ""))
-          1 -> runOne $ head concVals
+          [] -> finishFrame (FrameReverted (ConcreteBuf ""))
+          [h] -> runOne h
           _ -> runBoth . PleaseRunBoth ewordExpr $ runMore concVals
       Nothing -> do
         assign #result Nothing
         continue Nothing
     where
       runMore vals firstThread = do
-        case length vals of
+        case vals of
           -- if 2, we run both, otherwise, we run 1st and run ourselves with the rest
-          2 -> if firstThread then runOne $ head vals
-               else runOne (head $ tail vals)
-          _ -> if firstThread then runOne $ head vals
-               else runBoth . PleaseRunBoth ewordExpr $ runMore (tail vals)
+          [h, t] -> if firstThread then runOne h else runOne t
+          h:t ->    if firstThread then runOne h
+                    else runBoth . PleaseRunBoth ewordExpr $ runMore t
+          [] -> internalError "should not happen"
       runOne val = do
         assign #result Nothing
         pushTo #constraints $ Expr.simplifyProp (ewordExpr .== (Lit val))
