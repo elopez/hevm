@@ -22,6 +22,8 @@ import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Map.Merge.Strict qualified as Map
+import Data.Sequence (Seq)
+import Data.Sequence qualified as Seq
 import Data.Set (Set, isSubsetOf, size)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -414,7 +416,7 @@ maxIterationsReached :: VM Symbolic s -> Maybe Integer -> Maybe Bool
 maxIterationsReached _ Nothing = Nothing
 maxIterationsReached vm (Just maxIter) =
   let codelocation = getCodeLocation vm
-      (iters, _) = view (at codelocation % non (0, [])) vm.iterations
+      (iters, _) = view (at codelocation % non (0, Empty)) vm.iterations
   in if unsafeInto maxIter <= iters
      then Map.lookup (codelocation, iters - 1) vm.cache.path
      else Nothing
@@ -422,7 +424,7 @@ maxIterationsReached vm (Just maxIter) =
 askSmtItersReached :: VM Symbolic s -> Integer -> Bool
 askSmtItersReached vm askSmtIters = let
     codelocation = getCodeLocation vm
-    (iters, _) = view (at codelocation % non (0, [])) vm.iterations
+    (iters, _) = view (at codelocation % non (0, Empty)) vm.iterations
   in askSmtIters <= into iters
 
 {- | Loop head detection heuristic
@@ -437,11 +439,11 @@ isLoopHead :: LoopHeuristic -> VM Symbolic s -> Maybe Bool
 isLoopHead Naive _ = Just True
 isLoopHead StackBased vm = let
     loc = getCodeLocation vm
-    oldIters = Map.lookup loc vm.iterations
+    oldIters ::Maybe (Int, Seq (Expr EWord)) = Map.lookup loc vm.iterations
     isValid (Lit wrd) = wrd <= unsafeInto (maxBound :: Int) && isValidJumpDest vm (unsafeInto wrd)
     isValid _ = False
   in case oldIters of
-       Just (_, oldStack) -> Just $ filter isValid oldStack == filter isValid vm.state.stack
+       Just (_, oldStack) -> Just $ Seq.filter isValid oldStack == Seq.filter isValid vm.state.stack
        Nothing -> Nothing
 
 type Precondition s = VM Symbolic s -> Prop

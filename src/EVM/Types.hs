@@ -684,7 +684,7 @@ data VM (t :: VMType) s = VM
   , traces         :: Zipper.TreePos Zipper.Empty Trace
   , cache          :: Cache
   , burned         :: !(Gas t)
-  , iterations     :: Map CodeLocation (Int, [Expr EWord])
+  , iterations     :: Map CodeLocation (Int, Seq (Expr EWord))
   -- ^ how many times we've visited a loc, and what the contents of the stack were when we were there last
   , constraints    :: [Prop]
   , config         :: RuntimeConfig
@@ -774,7 +774,7 @@ data FrameState (t :: VMType) s = FrameState
   , codeContract :: Expr EAddr
   , code         :: ContractCode
   , pc           :: {-# UNPACK #-} !Int
-  , stack        :: [Expr EWord]
+  , stack        :: Seq (Expr EWord)
   , memory       :: Memory s
   , memorySize   :: Word64
   , calldata     :: Expr Buf
