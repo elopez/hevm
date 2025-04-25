@@ -1735,9 +1735,11 @@ maybeLitWordSimp e = case (concKeccakSimpExpr e) of
   _ -> Nothing
 
 maybeLitAddrSimp :: Expr EAddr -> Maybe Addr
-maybeLitAddrSimp e = case (concKeccakSimpExpr e) of
+maybeLitAddrSimp e = case e of
   LitAddr a -> Just a
-  _ -> Nothing
+  _ ->  case (concKeccakSimpExpr e) of
+    LitAddr a -> Just a
+    _ -> Nothing
 
 maybeConcStoreSimp :: Expr Storage -> Maybe (LMap.Map W256 W256)
 maybeConcStoreSimp e = case (concKeccakSimpExpr e) of
