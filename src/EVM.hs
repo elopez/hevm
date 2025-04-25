@@ -49,7 +49,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, fromJust, isJust, isNothing)
 import Data.Set (insert, member, fromList)
-import Data.Sequence (Seq)
+import Data.Sequence (Seq ((:<|)))
 import Data.Sequence qualified as Seq
 import Data.Text (unpack, pack)
 import Data.Text.Encoding (decodeUtf8)
@@ -309,10 +309,10 @@ exec1 conf = do
     let ?op = 0x00 -- dummy value
     let calldatasize = bufLength vm.state.calldata
     copyBytesToMemory vm.state.calldata calldatasize (Lit 0) (Lit 0)
-    executePrecompile (fromJust litSelf) vm.state.gas (Lit 0) calldatasize (Lit 0) (Lit 0) []
+    executePrecompile (fromJust litSelf) vm.state.gas (Lit 0) calldatasize (Lit 0) (Lit 0) Empty
     vmx <- get
     case vmx.state.stack of
-      x:_ -> case x of
+      x :<| _ -> case x of
         Lit 0 ->
           fetchAccount self $ \_ -> do
             touchAccount self
@@ -376,13 +376,13 @@ exec1 conf = do
         OpLog n ->
           notStatic $
           case stk of
-            (xOffset:xSize:xs) ->
+            (xOffset :<| xSize :<| xs) ->
               if length xs < (into n)
               then underrun
               else do
                 bytes <- readMemory xOffset xSize
-                let (topics, xs') = splitAt (into n) xs
-                    logs'         = (LogEntry (WAddr self) bytes topics) : vm.logs
+                let (topics, xs') = Seq.splitAt (into n) xs
+                    logs'         = (LogEntry (WAddr self) bytes $ toList topics) : vm.logs
                 burnLog xSize n $
                   accessMemoryRange xOffset xSize $ do
                     traceTopLog logs'
@@ -430,7 +430,7 @@ exec1 conf = do
         -- more accurately referred to as KECCAK
         OpSha3 ->
           case stk of
-            xOffset:xSize:xs ->
+            xOffset:<|xSize:<|xs ->
               burnSha3 xSize $
                 accessMemoryRange xOffset xSize $ do
                   hash <- readMemory xOffset xSize >>= \case
@@ -440,7 +440,7 @@ exec1 conf = do
                         (pure $ Lit (keccak' bs))
                     buf -> pure $ Keccak buf
                   next
-                  assign (#state % #stack) (hash : xs)
+                  assign (#state % #stack) (hash <| xs)
             _ -> underrun
 
         OpAddress ->
@@ -449,13 +449,13 @@ exec1 conf = do
 
         OpBalance ->
           case stk of
-            x:xs -> forceAddr x (freshVarFallback xs) $ \a ->
+            x:<|xs -> forceAddr x (freshVarFallback xs) $ \a ->
               accessAndBurn a $
                 fetchAccountWithFallback a (freshVarFallback xs) $ \c -> do
                   next
                   assign (#state % #stack) xs
                   pushSym c.balance
-            [] -> underrun
+            _ -> underrun
 
         OpOrigin ->
           limitStack 1 . burn g_base $
@@ -478,7 +478,7 @@ exec1 conf = do
 
         OpCalldatacopy ->
           case stk of
-            xTo:xFrom:xSize:xs ->
+            xTo:<|xFrom:<|xSize:<|xs ->
               burnCalldatacopy xSize $
                 accessMemoryRange xTo xSize $ do
                   next
@@ -492,7 +492,7 @@ exec1 conf = do
 
         OpCodecopy ->
           case stk of
-            memOffset:codeOffset:n:xs ->
+            memOffset:<|codeOffset:<|n:<|xs ->
               burnCodecopy n $ do
                 accessMemoryRange memOffset n $ do
                   next
@@ -508,7 +508,7 @@ exec1 conf = do
 
         OpExtcodesize ->
           case stk of
-            x':xs -> forceAddr x' (freshVarFallback xs) $ \x -> do
+            x':<|xs -> forceAddr x' (freshVarFallback xs) $ \x -> do
               let impl = accessAndBurn x $
                            fetchAccountWithFallback x (freshVarFallback xs) $ \c -> do
                              next
@@ -524,12 +524,12 @@ exec1 conf = do
                     pushSym (Lit 1)
                   else impl
                 _ -> impl
-            [] ->
+            _ ->
               underrun
 
         OpExtcodecopy ->
           case stk of
-            extAccount':memOffset:codeOffset:codeSize:xs ->
+            extAccount':<|memOffset:<|codeOffset:<|codeSize:<|xs ->
               forceAddr extAccount' (unexpectedSymArgW "EXTCODECOPY") $ \extAccount -> do
                 burnExtcodecopy extAccount codeSize $
                   accessMemoryRange memOffset codeSize $
@@ -547,7 +547,7 @@ exec1 conf = do
 
         OpReturndatacopy ->
           case stk of
-            xTo:xFrom:xSize:xs ->
+            xTo:<|xFrom:<|xSize:<|xs ->
               burnReturndatacopy xSize $
                 accessMemoryRange xTo xSize $ do
                   next
@@ -567,7 +567,7 @@ exec1 conf = do
 
         OpExtcodehash ->
           case stk of
-            x':xs -> forceAddr x' (freshVarFallback xs) $ \x ->
+            x':<|xs -> forceAddr x' (freshVarFallback xs) $ \x ->
               accessAndBurn x $ do
                 fetchAccountWithFallback x (freshVarFallback xs) $ \c -> do
                    next
@@ -577,7 +577,7 @@ exec1 conf = do
                      else case view bytecode c of
                             Just b -> pushSym $ keccak b
                             Nothing -> pushSym $ CodeHash x
-            [] ->
+            _ ->
               underrun
 
         OpBlockhash -> do
@@ -638,24 +638,24 @@ exec1 conf = do
 
         OpPop ->
           case stk of
-            _:xs -> burn g_base (next >> assign (#state % #stack) xs)
+            _:<|xs -> burn g_base (next >> assign (#state % #stack) xs)
             _    -> underrun
 
         OpMload ->
           case stk of
-            x:xs ->
+            x:<|xs ->
               burn g_verylow $
                 accessMemoryWord x $ do
                   next
                   buf <- readMemory x (Lit 32)
                   let w = Expr.readWordFromBytes (Lit 0) buf
-                  assign (#state % #stack) (w : xs)
+                  assign (#state % #stack) (w <| xs)
             _ -> underrun
 
 
         OpMcopy ->
           case stk of
-            dstOff:srcOff:sz:xs ->  do
+            dstOff:<|srcOff:<|sz:<|xs ->  do
               case sz of
                 Lit sz' -> do
                   let words_copied = (sz' + 31) `div` 32
@@ -682,7 +682,7 @@ exec1 conf = do
 
         OpMstore ->
           case stk of
-            x:y:xs ->
+            x:<|y:<|xs ->
               burn g_verylow $
                 accessMemoryWord x $ do
                   next
@@ -702,7 +702,7 @@ exec1 conf = do
 
         OpMstore8 ->
           case stk of
-            x:y:xs ->
+            x:<|y:<|xs ->
               burn g_verylow $
                 accessMemoryRange x (Lit 1) $ do
                   let yByte = indexWord (Lit 31) y
@@ -724,19 +724,19 @@ exec1 conf = do
 
         OpSload ->
           case stk of
-            x:xs -> do
+            x:<|xs -> do
               acc <- accessStorageForGas self x
               let cost = if acc then g_warm_storage_read else g_cold_sload
               burn cost $
                 accessStorage self x $ \y -> do
                   next
-                  assign (#state % #stack) (y:xs)
+                  assign (#state % #stack) (y <| xs)
             _ -> underrun
 
         OpSstore ->
           notStatic $
           case stk of
-            x:new:xs ->
+            x:<|new:<|xs ->
               accessStorage self x $ \current -> do
                 ensureGas g_callstipend $ do
                   let
@@ -785,17 +785,17 @@ exec1 conf = do
 
         OpTload ->
           case stk of
-            x:xs -> do
+            x:<|xs -> do
               burn g_warm_storage_read $
                 accessTStorage self x $ \y -> do
                   next
-                  assign (#state % #stack) (y:xs)
+                  assign (#state % #stack) (y <| xs)
             _ -> underrun
 
         OpTstore ->
           notStatic $
           case stk of
-            x:new:xs ->
+            x:<|new:<|xs ->
               burn g_sload $ do
                 next
                 modifying (#env % #contracts % ix self % #tStorage) (writeStorage x new)
@@ -804,7 +804,7 @@ exec1 conf = do
 
         OpJump ->
           case stk of
-            x:xs ->
+            x:<|xs ->
               burn g_mid $ forceConcreteLimitSz x 2 "JUMP: symbolic jumpdest" $ \x' ->
                 case tryInto x' of
                   Left _ -> vmError BadJumpDestination
@@ -813,7 +813,7 @@ exec1 conf = do
 
         OpJumpi ->
           case stk of
-            x:y:xs -> forceConcreteLimitSz x 2 "JUMPI: symbolic jumpdest" $ \x' ->
+            x:<|y:<|xs -> forceConcreteLimitSz x 2 "JUMPI: symbolic jumpdest" $ \x' ->
               burn g_high $
                 let jump :: Bool -> EVM t s ()
                     jump False = assign (#state % #stack) xs >> next
@@ -842,10 +842,10 @@ exec1 conf = do
           --       https://hackage.haskell.org/package/sbv-9.0/docs/src/Data.SBV.Core.Model.html#.%5E
           --       However, it requires symbolic gas, since the gas depends on the exponent
           case stk of
-            base:exponent:xs ->
+            base:<|exponent:<|xs ->
               burnExp exponent $ do
                 next
-                (#state % #stack) .= Expr.exp base exponent : xs
+                (#state % #stack) .= Expr.exp base exponent <| xs
             _ -> underrun
 
         OpSignextend -> stackOp2 g_low Expr.sex
@@ -853,7 +853,7 @@ exec1 conf = do
         OpCreate ->
           notStatic $
           case stk of
-            xValue:xOffset:xSize:xs ->
+            xValue:<|xOffset:<|xSize:<|xs ->
               accessMemoryRange xOffset xSize $ do
                 availableGas <- use (#state % #gas)
                 let (cost, gas') = costOfCreate fees availableGas xSize False
@@ -874,7 +874,7 @@ exec1 conf = do
 
         OpCall ->
           case stk of
-            xGas:xTo':xValue:xInOffset:xInSize:xOutOffset:xOutSize:xs ->
+            xGas:<|xTo':<|xValue:<|xInOffset:<|xInSize:<|xOutOffset:<|xOutSize:<|xs ->
               branch conf.maxDepth (Expr.gt xValue (Lit 0)) $ \gt0 -> do
                 let addrFallback = if conf.promiseNoReent then const fallback
                                    else unexpectedSymArgW "unable to determine a call target"
@@ -901,7 +901,7 @@ exec1 conf = do
 
         OpCallcode ->
           case stk of
-            xGas:xTo':xValue:xInOffset:xInSize:xOutOffset:xOutSize:xs ->
+            xGas:<|xTo':<|xValue:<|xInOffset:<|xInSize:<|xOutOffset:<|xOutSize:<|xs ->
               forceAddr xTo' (unexpectedSymArgW "unable to determine a call target") $ \xTo ->
                 case gasTryFrom xGas of
                   Left _ -> vmError IllegalOverflow
@@ -916,7 +916,7 @@ exec1 conf = do
 
         OpReturn ->
           case stk of
-            xOffset:xSize:_ ->
+            xOffset:<|xSize:<|_ ->
               accessMemoryRange xOffset xSize $ do
                 output <- readMemory xOffset xSize
                 let
@@ -949,7 +949,7 @@ exec1 conf = do
 
         OpDelegatecall ->
           case stk of
-            xGas:xTo:xInOffset:xInSize:xOutOffset:xOutSize:xs ->
+            xGas:<|xTo:<|xInOffset:<|xInSize:<|xOutOffset:<|xOutSize:<|xs ->
               case wordToAddr xTo of
                 Nothing -> unexpectedSymArg "unable to determine a call target" [xTo]
                 Just xTo' ->
@@ -964,7 +964,7 @@ exec1 conf = do
 
         OpCreate2 -> notStatic $
           case stk of
-            xValue:xOffset:xSize:xSalt':xs ->
+            xValue:<|xOffset:<|xSize:<|xSalt':<|xs ->
               forceConcrete xSalt' "CREATE2" $ \(xSalt) ->
                 accessMemoryRange xOffset xSize $ do
                   availableGas <- use (#state % #gas)
@@ -987,7 +987,7 @@ exec1 conf = do
 
         OpStaticcall ->
           case stk of
-            xGas:xTo:xInOffset:xInSize:xOutOffset:xOutSize:xs ->
+            xGas:<|xTo:<|xInOffset:<|xInSize:<|xOutOffset:<|xOutSize:<|xs ->
               case wordToAddr xTo of
                 Nothing -> fallback
                 Just xTo' -> do
@@ -1010,8 +1010,7 @@ exec1 conf = do
         OpSelfdestruct ->
           notStatic $
           case stk of
-            [] -> underrun
-            (xTo':_) -> forceAddr xTo' (unexpectedSymArgW "SELFDESTRUCT") $ \case
+            (xTo':<|_) -> forceAddr xTo' (unexpectedSymArgW "SELFDESTRUCT") $ \case
               xTo@(LitAddr _) -> do
                 cc <- gets (.tx.subState.createdContracts)
                 let createdThisTr = self `member` cc
@@ -1037,10 +1036,11 @@ exec1 conf = do
                     else
                       doStop
               a -> unexpectedSymArg "trying to self destruct to a symbolic address" [a]
+            _ -> underrun
 
         OpRevert ->
           case stk of
-            xOffset:xSize:_ ->
+            xOffset:<|xSize:<|_ ->
               accessMemoryRange xOffset xSize $ do
                 output <- readMemory xOffset xSize
                 finishFrame (FrameReverted output)
@@ -1095,7 +1095,7 @@ callChecks
   -> Expr EWord
   -> Expr EWord
   -> Expr EWord
-  -> [Expr EWord]
+  -> Seq (Expr EWord)
   -- continuation with gas available for call
   -> (Gas t -> EVM t s ())
   -> EVM t s ()
@@ -1112,7 +1112,7 @@ callChecks this xGas xContext xTo xValue xInOffset xInSize xOutOffset xOutSize x
         let checkCallDepth =
               if length vm.frames >= 1024
               then do
-                assign (#state % #stack) (Lit 0 : xs)
+                assign (#state % #stack) (Lit 0 <| xs)
                 assign (#state % #returndata) mempty
                 pushTrace $ ErrorTrace CallDepthLimitReached
                 next
@@ -1126,7 +1126,7 @@ callChecks this xGas xContext xTo xValue xInOffset xInSize xOutOffset xOutSize x
             burn (cost - gas') $
               branch (?conf).maxDepth (Expr.gt xValue fb) $ \case
                 True -> do
-                  assign (#state % #stack) (Lit 0 : xs)
+                  assign (#state % #stack) (Lit 0 <| xs)
                   assign (#state % #returndata) mempty
                   pushTrace $ ErrorTrace (BalanceTooLow xValue this.balance)
                   next
@@ -1155,7 +1155,7 @@ precompiledContract
   -> Addr
   -> Expr EWord
   -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord
-  -> [Expr EWord]
+  -> Seq (Expr EWord)
   -> EVM t s ()
 precompiledContract this xGas precompileAddr recipient xValue inOffset inSize outOffset outSize xs
   = callChecks this xGas (LitAddr recipient) (LitAddr precompileAddr) xValue inOffset inSize outOffset outSize xs $ \gas' ->
@@ -1166,7 +1166,7 @@ precompiledContract this xGas precompileAddr recipient xValue inOffset inSize ou
       result' <- use #result
       case result' of
         Nothing -> case stk of
-          x:_ -> case maybeLitWordSimp x of
+          x:<|_ -> case maybeLitWordSimp x of
             Just 0 ->
               pure ()
             Just 1 ->
@@ -1181,7 +1181,7 @@ precompiledContract this xGas precompileAddr recipient xValue inOffset inSize ou
 executePrecompile
   :: (?op :: Word8, VMOps t)
   => Addr
-  -> Gas t -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord -> [Expr EWord]
+  -> Gas t -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord -> Seq (Expr EWord)
   -> EVM t s ()
 executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = do
   vm <- get
@@ -1190,12 +1190,12 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
       cost = costOfPrecompile fees preCompileAddr input
       notImplemented = internalError $ "precompile at address " <> show preCompileAddr <> " not yet implemented"
       precompileFail = burn' (subGas gasCap cost) $ do
-                         assign (#state % #stack) (Lit 0 : xs)
+                         assign (#state % #stack) (Lit 0 <| xs)
                          pushTrace $ ErrorTrace PrecompileFailure
                          next
   if not (enoughGas cost gasCap) then
     burn' gasCap $ do
-      assign (#state % #stack) (Lit 0 : xs)
+      assign (#state % #stack) (Lit 0 <| xs)
       next
   else burn cost $
     case preCompileAddr of
@@ -1206,11 +1206,11 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           case EVM.Precompiled.execute 0x1 (truncpadlit 128 input') 32 of
             Nothing -> do
               -- return no output for invalid signature
-              assign (#state % #stack) (Lit 1 : xs)
+              assign (#state % #stack) (Lit 1 <| xs)
               assign (#state % #returndata) mempty
               next
             Just output -> do
-              assign (#state % #stack) (Lit 1 : xs)
+              assign (#state % #stack) (Lit 1 <| xs)
               assign (#state % #returndata) (ConcreteBuf output)
               copyBytesToMemory (ConcreteBuf output) outSize (Lit 0) outOffset
               next
@@ -1221,7 +1221,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           let
             hash = sha256Buf input'
             sha256Buf x = ConcreteBuf $ BA.convert (Crypto.hash x :: Digest SHA256)
-          assign (#state % #stack) (Lit 1 : xs)
+          assign (#state % #stack) (Lit 1 <| xs)
           assign (#state % #returndata) hash
           copyBytesToMemory hash outSize (Lit 0) outOffset
           next
@@ -1234,14 +1234,14 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             padding = BS.pack $ replicate 12 0
             hash' = BA.convert (Crypto.hash input' :: Digest RIPEMD160)
             hash  = ConcreteBuf $ padding <> hash'
-          assign (#state % #stack) (Lit 1 : xs)
+          assign (#state % #stack) (Lit 1 <| xs)
           assign (#state % #returndata) hash
           copyBytesToMemory hash outSize (Lit 0) outOffset
           next
 
       -- IDENTITY
       0x4 -> do
-          assign (#state % #stack) (Lit 1 : xs)
+          assign (#state % #stack) (Lit 1 <| xs)
           assign (#state % #returndata) input
           copyCallBytesToMemory input outSize outOffset
           next
@@ -1263,7 +1263,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
                   m = asInteger $ lazySlice (96 + lenb + lene) lenm input'
                 in
                   padLeft (unsafeInto lenm) (asBE (expFast b e m))
-          assign (#state % #stack) (Lit 1 : xs)
+          assign (#state % #stack) (Lit 1 <| xs)
           assign (#state % #returndata) output
           copyBytesToMemory output outSize (Lit 0) outOffset
           next
@@ -1276,7 +1276,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             Nothing -> precompileFail
             Just output -> do
               let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-              assign (#state % #stack) (Lit 1 : xs)
+              assign (#state % #stack) (Lit 1 <| xs)
               assign (#state % #returndata) truncpaddedOutput
               copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
               next
@@ -1289,7 +1289,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           Nothing -> precompileFail
           Just output -> do
             let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-            assign (#state % #stack) (Lit 1 : xs)
+            assign (#state % #stack) (Lit 1 <| xs)
             assign (#state % #returndata) truncpaddedOutput
             copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
             next
@@ -1302,7 +1302,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           Nothing -> precompileFail
           Just output -> do
             let truncpaddedOutput = ConcreteBuf $ truncpadlit 32 output
-            assign (#state % #stack) (Lit 1 : xs)
+            assign (#state % #stack) (Lit 1 <| xs)
             assign (#state % #returndata) truncpaddedOutput
             copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
             next
@@ -1315,7 +1315,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             (213, True) -> case EVM.Precompiled.execute 0x9 input' 64 of
               Just output -> do
                 let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-                assign (#state % #stack) (Lit 1 : xs)
+                assign (#state % #stack) (Lit 1 <| xs)
                 assign (#state % #returndata) truncpaddedOutput
                 copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
                 next
@@ -1614,7 +1614,7 @@ unexpectedSymArgW msg n = unexpectedSymArg msg [n]
 unknownCode :: VMOps t => Expr EAddr -> EVM t s ()
 unknownCode n = unexpectedSymArg "call target has unknown code" [n]
 
-freshBufFallback :: (?conf :: Config, VMOps t, ?op :: Word8) => [Expr EWord] -> EVM t s ()
+freshBufFallback :: (?conf :: Config, VMOps t, ?op :: Word8) => Seq (Expr EWord) -> EVM t s ()
 freshBufFallback xs = do
   -- Reset caller if needed
   resetCaller <- use $ #state % #resetCaller
@@ -1628,9 +1628,9 @@ freshBufFallback xs = do
   let freshReturndataExpr = AbstractBuf (opName <> "-result-data-fresh-" <> (pack . show) freshVar)
   modifying #constraints ((:) (PLEq (bufLength freshReturndataExpr) (Lit (2 ^ ?conf.maxBufSize))))
   assign (#state % #returndata) freshReturndataExpr
-  next >> assign (#state % #stack) (freshVarExpr:xs)
+  next >> assign (#state % #stack) (freshVarExpr <| xs)
 
-freshVarFallback:: (VMOps t, ?op :: Word8) => [Expr EWord] -> Expr a -> EVM t s ()
+freshVarFallback:: (VMOps t, ?op :: Word8) => Seq (Expr EWord) -> Expr a -> EVM t s ()
 freshVarFallback xs _ = do
   -- Reset caller if needed
   resetCaller <- use $ #state % #resetCaller
@@ -1640,7 +1640,7 @@ freshVarFallback xs _ = do
   assign #freshVar (freshVar + 1)
   let opName = pack $ show $ getOp ?op
   let freshVarExpr = Var (opName <> "-result-stack-fresh-" <> (pack . show) freshVar)
-  next >> assign (#state % #stack) (freshVarExpr:xs)
+  next >> assign (#state % #stack) (freshVarExpr <| xs)
 
 forceConcrete :: (?conf :: Config, VMOps t) => Expr EWord -> String -> (W256 -> EVM t s ()) -> EVM t s ()
 forceConcrete n = forceConcreteLimitSz n 32
@@ -1729,7 +1729,7 @@ cheatCode = LitAddr $ unsafeInto (keccak' "hevm cheat code")
 
 cheat
   :: forall t s . (?conf :: Config, ?op :: Word8, VMOps t)
-  => Gas t -> (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord) -> [Expr EWord]
+  => Gas t -> (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord) -> Seq (Expr EWord)
   -> EVM t s ()
 cheat gas (inOffset, inSize) (outOffset, outSize) xs = do
   vm <- get
@@ -2083,7 +2083,7 @@ delegateCall
   -> Expr EWord
   -> Expr EWord
   -> Expr EWord
-  -> [Expr EWord]
+  -> Seq (Expr EWord)
   -> (Expr EAddr -> EVM t s ()) -- fallback
   -> (Expr EAddr -> EVM t s ()) -- continue
   -> EVM t s ()
@@ -2157,26 +2157,26 @@ collision c' = case c' of
 
 create :: forall t s. (?op :: Word8, ?conf::Config, VMOps t)
   => Expr EAddr -> Contract
-  -> Expr EWord -> Gas t -> Expr EWord -> [Expr EWord] -> Expr EAddr -> Expr Buf -> EVM t s ()
+  -> Expr EWord -> Gas t -> Expr EWord -> Seq (Expr EWord) -> Expr EAddr -> Expr Buf -> EVM t s ()
 create self this xSize xGas xValue xs newAddr initCode = do
   vm0 <- get
   -- are we exceeding the max init code size
   if xSize > Lit (vm0.block.maxCodeSize * 2)
   then do
-    assign (#state % #stack) (Lit 0 : xs)
+    assign (#state % #stack) (Lit 0 <| xs)
     assign (#state % #returndata) mempty
     vmError $ MaxInitCodeSizeExceeded (vm0.block.maxCodeSize * 2) xSize
   -- are we overflowing the nonce
   else if this.nonce == Just maxBound
   then do
-    assign (#state % #stack) (Lit 0 : xs)
+    assign (#state % #stack) (Lit 0 <| xs)
     assign (#state % #returndata) mempty
     pushTrace $ ErrorTrace NonceOverflow
     next
   -- are we overflowing the stack
   else if length vm0.frames >= 1024
   then do
-    assign (#state % #stack) (Lit 0 : xs)
+    assign (#state % #stack) (Lit 0 <| xs)
     assign (#state % #returndata) mempty
     pushTrace $ ErrorTrace CallDepthLimitReached
     next
@@ -2186,14 +2186,14 @@ create self this xSize xGas xValue xs newAddr initCode = do
   -- safe to perform statically
   else if collision $ Map.lookup newAddr vm0.env.contracts
   then burn' xGas $ do
-    assign (#state % #stack) (Lit 0 : xs)
+    assign (#state % #stack) (Lit 0 <| xs)
     assign (#state % #returndata) mempty
     modifying (#env % #contracts % ix self % #nonce) (fmap ((+) 1))
     next
   -- do we have enough balance
   else branch (?conf).maxDepth (Expr.gt xValue this.balance) $ \case
       True -> do
-        assign (#state % #stack) (Lit 0 : xs)
+        assign (#state % #stack) (Lit 0 <| xs)
         assign (#state % #returndata) mempty
         pushTrace $ ErrorTrace $ BalanceTooLow xValue this.balance
         next
@@ -2628,11 +2628,11 @@ push :: W256 -> EVM t s ()
 push = pushSym . Lit
 
 pushSym :: Expr EWord -> EVM t s ()
-pushSym x = #state % #stack %= (x :)
+pushSym x = #state % #stack %= (x <|)
 
 pushAddr :: Expr EAddr -> EVM t s ()
-pushAddr (LitAddr x) = #state % #stack %= (Lit (into x) :)
-pushAddr x@(SymAddr _) = #state % #stack %= (WAddr x :)
+pushAddr (LitAddr x) = #state % #stack %= (Lit (into x) <|)
+pushAddr x@(SymAddr _) = #state % #stack %= (WAddr x <|)
 pushAddr (GVar _) = internalError "Unexpected GVar"
 
 stackOp1
@@ -2642,11 +2642,11 @@ stackOp1
   -> EVM t s ()
 stackOp1 cost f =
   use (#state % #stack) >>= \case
-    x:xs ->
+    x:<|xs ->
       burn cost $ do
         next
         let !y = f x
-        #state % #stack .= y : xs
+        #state % #stack .= y <| xs
     _ ->
       underrun
 
@@ -2657,10 +2657,10 @@ stackOp2
   -> EVM t s ()
 stackOp2 cost f =
   use (#state % #stack) >>= \case
-    x:y:xs ->
+    x:<|y:<|xs ->
       burn cost $ do
         next
-        #state % #stack .= f x y : xs
+        #state % #stack .= f x y <| xs
     _ ->
       underrun
 
@@ -2671,16 +2671,16 @@ stackOp3
   -> EVM t s ()
 stackOp3 cost f =
   use (#state % #stack) >>= \case
-    x:y:z:xs ->
+    x:<|y:<|z:<|xs ->
       burn cost $ do
       next
-      (#state % #stack) .= f x y z : xs
+      (#state % #stack) .= f x y z <| xs
     _ ->
       underrun
 
 -- * Bytecode data functions
 
-checkJump :: VMOps t => Int -> [Expr EWord] -> EVM t s ()
+checkJump :: VMOps t => Int -> Seq (Expr EWord) -> EVM t s ()
 checkJump x xs = noJumpIntoInitData x $ do
   vm <- get
   case isValidJumpDest vm x of
@@ -3019,7 +3019,7 @@ instance VMOps Symbolic where
         assign #result Nothing
         pushTo #constraints $ if v then Expr.simplifyProp (condSimpConc ./= Lit 0)
                                    else Expr.simplifyProp (condSimpConc .== Lit 0)
-        (iteration, _) <- use (#iterations % at loc % non (0,[]))
+        (iteration, _) <- use (#iterations % at loc % non (0,Empty))
         stack <- use (#state % #stack)
         assign (#cache % #path % at (loc, iteration)) (Just v)
         assign (#iterations % at loc) (Just (iteration + 1, stack))

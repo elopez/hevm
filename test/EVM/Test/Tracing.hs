@@ -23,6 +23,7 @@ import Data.Aeson qualified as JSON
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as Char8
+import Data.Foldable (toList)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Map.Strict qualified as Map
 import Data.Text.IO qualified as T
@@ -503,7 +504,7 @@ vmtrace vm =
              -- increment to match geth format
              , traceDepth = 1 + length (vm.frames)
              -- reverse to match geth format
-             , traceStack = reverse $ forceLit <$> vm.state.stack
+             , traceStack = reverse $ toList $ forceLit <$> vm.state.stack
              , traceError = readoutError vm.result
              }
   where
