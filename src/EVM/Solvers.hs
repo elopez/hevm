@@ -30,6 +30,7 @@ import EVM.Fuzz (tryCexFuzz)
 import Numeric (readHex)
 import Data.Bits ((.&.))
 import Numeric (showHex)
+import EVM.Expr (simplifyProps)
 
 import EVM.SMT
 import EVM.Types
@@ -76,24 +77,8 @@ data MultiData = MultiData
 
 data SingleData = SingleData
   { smt2 :: SMT2
-  , resultChan :: Chan CheckSatResult
+  , resultChan :: Chan SMTResult
   }
-
--- | The result of a call to (check-sat)
-data CheckSatResult
-  = Sat SMTCex
-  | Unsat
-  | Unknown String
-  | Error String
-  deriving (Show, Eq)
-
-isSat :: CheckSatResult -> Bool
-isSat (Sat _) = True
-isSat _ = False
-
-isUnsat :: CheckSatResult -> Bool
-isUnsat Unsat = True
-isUnsat _ = False
 
 checkMulti :: SolverGroup -> Err SMT2 -> MultiSol -> IO (Maybe [W256])
 checkMulti (SolverGroup taskQueue) smt2 multiSol = do
@@ -106,7 +91,20 @@ checkMulti (SolverGroup taskQueue) smt2 multiSol = do
     -- collect result
     readChan resChan
 
-checkSat :: SolverGroup -> Err SMT2 -> IO CheckSatResult
+checkSatWithProps :: App m => SolverGroup -> [Prop] -> m (SMTResult, Err SMT2)
+checkSatWithProps (SolverGroup taskQueue) props = do
+  conf <- readConfig
+  let psSimp = simplifyProps props
+  if psSimp == [PBool False] then pure (Qed, Right mempty)
+  else do
+    let smt2 = assertProps conf psSimp
+    if isLeft smt2 then
+      let err = getError smt2 in pure (Error err, Left err)
+    else do
+      res <- liftIO $ checkSat (SolverGroup taskQueue) smt2
+      pure (res, Right (getNonError smt2))
+
+checkSat :: SolverGroup -> Err SMT2 -> IO SMTResult
 checkSat (SolverGroup taskQueue) smt2 = do
   if isLeft smt2 then pure $ Error $ getError smt2
   else do
@@ -213,7 +211,7 @@ getMultiSol smt2@(SMT2 cmds cexvars _) multiSol r inst availableInstances fileCo
           when conf.debug $ putStrLn $ "Unable to write SMT to solver: " <> (T.unpack err)
           writeChan r Nothing
 
-getOneSol :: (MonadIO m, ReadConfig m) => SMT2 -> (Chan CheckSatResult) -> SolverInstance -> Chan SolverInstance -> Int -> m ()
+getOneSol :: (MonadIO m, ReadConfig m) => SMT2 -> (Chan SMTResult) -> SolverInstance -> Chan SolverInstance -> Int -> m ()
 getOneSol smt2@(SMT2 cmds cexvars ps) r inst availableInstances fileCounter = do
   conf <- readConfig
   let fuzzResult = tryCexFuzz ps conf.numCexFuzz
@@ -222,7 +220,7 @@ getOneSol smt2@(SMT2 cmds cexvars ps) r inst availableInstances fileCounter = do
     if (isJust fuzzResult)
       then do
         when (conf.debug) $ putStrLn $ "   Cex found via fuzzing:" <> (show fuzzResult)
-        writeChan r (Sat $ fromJust fuzzResult)
+        writeChan r (Cex $ fromJust fuzzResult)
       else if Prelude.not conf.onlyCexFuzz then do
         -- reset solver and send all lines of provided script
         out <- sendScript inst ("(reset)" : cmds)
@@ -234,10 +232,10 @@ getOneSol smt2@(SMT2 cmds cexvars ps) r inst availableInstances fileCounter = do
             sat <- sendLine inst "(check-sat)"
             res <- do
                 case sat of
-                  "unsat" -> pure Unsat
-                  "timeout" -> pure $ EVM.Solvers.Unknown "Result timeout by SMT solver"
-                  "unknown" -> pure $ EVM.Solvers.Unknown "Result unknown by SMT solver"
-                  "sat" -> Sat <$> getModel inst cexvars
+                  "unsat" -> pure Qed
+                  "timeout" -> pure $ Unknown "Result timeout by SMT solver"
+                  "unknown" -> pure $ Unknown "Result unknown by SMT solver"
+                  "sat" -> Cex <$> getModel inst cexvars
                   _ -> pure . Error $ "Unable to parse SMT solver output: " <> T.unpack sat
             writeChan r res
       else do
@@ -251,13 +249,13 @@ getModel :: SolverInstance -> CexVars -> IO SMTCex
 getModel inst cexvars = do
   -- get an initial version of the model from the solver
   initialModel <- getRaw
-  -- get concrete values for each buffers max read index
-  hints <- capHints <$> queryMaxReads (getValue inst) cexvars.buffers
   -- check the sizes of buffer models and shrink if needed
   if bufsUsable initialModel
-  then do
-    pure (mkConcrete initialModel)
-  else mkConcrete . snd <$> runStateT (shrinkModel hints) initialModel
+  then pure initialModel
+  else do
+    -- get concrete values for each buffers max read index
+    hints <- capHints <$> queryMaxReads (getValue inst) cexvars.buffers
+    snd <$> runStateT (shrinkModel hints) initialModel
   where
     getRaw :: IO SMTCex
     getRaw = do
@@ -307,14 +305,12 @@ getModel inst cexvars = do
           put model
         "unsat" -> do
           liftIO $ checkCommand inst "(pop 1)"
-          shrinkBuf buf (if hint == 0 then hint + 1 else hint * 2)
+          let nextHint = if hint == 0 then 1 else hint * 2
+          if nextHint < hint
+            then pure () -- overflow
+            else shrinkBuf buf nextHint
         e -> internalError $ "Unexpected solver output: " <> (T.unpack e)
 
-    -- Collapses the abstract description of a models buffers down to a bytestring
-    mkConcrete :: SMTCex -> SMTCex
-    mkConcrete c = fromMaybe
-      (internalError $ "counterexample contains buffers that are too large to be represented as a ByteString: " <> show c)
-      (flattenBufs c)
 
     -- we set a pretty arbitrary upper limit (of 1024) to decide if we need to do some shrinking
     bufsUsable :: SMTCex -> Bool
@@ -351,6 +347,7 @@ solverArgs solver threads timeout = case solver of
     , "--interactive"
     , "--incremental"
     , "--tlimit-per=" <> mkTimeout timeout
+    , "--arrays-exp"
     ]
   Custom _ -> []
 

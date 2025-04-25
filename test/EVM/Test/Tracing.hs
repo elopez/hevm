@@ -17,12 +17,13 @@ import Control.Monad.Operational qualified as Operational
 import Control.Monad.ST (RealWorld, ST, stToIO)
 import Control.Monad.State.Strict (StateT(..))
 import Control.Monad.State.Strict qualified as State
-import Control.Monad.Reader (ReaderT)
+import Control.Monad.Reader (ReaderT, lift)
 import Data.Aeson ((.:), (.:?))
 import Data.Aeson qualified as JSON
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as Char8
+import Data.Foldable (toList)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Map.Strict qualified as Map
 import Data.Text.IO qualified as T
@@ -53,7 +54,7 @@ import EVM.Expr qualified as Expr
 import EVM.Concrete qualified as Concrete
 import EVM.Exec (ethrunAddress)
 import EVM.Fetch qualified as Fetch
-import EVM.Format (bsToHex, formatBinary)
+import EVM.Format (formatBinary)
 import EVM.FeeSchedule
 import EVM.Op (intToOpName)
 import EVM.Sign (deriveAddr)
@@ -144,7 +145,7 @@ instance JSON.FromJSON EVMToolTraceOutput
 data EVMToolEnv = EVMToolEnv
   { coinbase    :: Addr
   , timestamp   :: Expr EWord
-  , number      :: W256
+  , number      :: Expr EWord
   , gasLimit    :: Data.Word.Word64
   , baseFee     :: W256
   , maxCodeSize :: W256
@@ -158,7 +159,7 @@ data EVMToolEnv = EVMToolEnv
 instance JSON.ToJSON EVMToolEnv where
   toJSON b = JSON.object [ ("currentCoinBase"  , (JSON.toJSON b.coinbase))
                          , ("currentGasLimit"  , (JSON.toJSON ("0x" ++ showHex (into @Integer b.gasLimit) "")))
-                         , ("currentNumber"    , (JSON.toJSON b.number))
+                         , ("currentNumber"    , (JSON.toJSON number))
                          , ("currentTimestamp" , (JSON.toJSON tstamp))
                          , ("currentBaseFee"   , (JSON.toJSON b.baseFee))
                          , ("blockHashes"      , (JSON.toJSON b.blockHashes))
@@ -171,11 +172,15 @@ instance JSON.ToJSON EVMToolEnv where
                 tstamp = case (b.timestamp) of
                               Lit a -> a
                               _ -> internalError "Timestamp needs to be a Lit"
+                number :: W256
+                number = case (b.number) of
+                              Lit a -> a
+                              _ -> internalError "Timestamp needs to be a Lit"
 
 emptyEvmToolEnv :: EVMToolEnv
 emptyEvmToolEnv = EVMToolEnv { coinbase = 0
                              , timestamp = Lit 0
-                             , number     = 0
+                             , number     = Lit 0
                              , gasLimit   = 0xffffffffffffffff
                              , baseFee    = 0
                              , maxCodeSize= 0xffffffff
@@ -287,7 +292,7 @@ evmSetup contr txData gaslimitExec = (txn, evmEnv, contrAlloc, fromAddress, toAd
       }
     evmEnv = EVMToolEnv { coinbase      = 0xff
                         , timestamp     = Lit 0x3e8
-                        , number        = 0x0
+                        , number        = Lit 0
                         , gasLimit      = unsafeInto gaslimitExec
                         , baseFee       = 0x0
                         , maxCodeSize   = 0xfffff
@@ -498,7 +503,7 @@ vmtrace vm =
              -- increment to match geth format
              , traceDepth = 1 + length (vm.frames)
              -- reverse to match geth format
-             , traceStack = reverse $ forceLit <$> vm.state.stack
+             , traceStack = reverse $ toList $ forceLit <$> vm.state.stack
              , traceError = readoutError vm.result
              }
   where
@@ -532,11 +537,12 @@ runWithTrace :: App m => StateT (TraceState RealWorld) m (VM Concrete RealWorld)
 runWithTrace = do
   -- This is just like `exec` except for every instruction evaluated,
   -- we also increment a counter indexed by the current code location.
+  conf <- lift readConfig
   vm0 <- use _1
   case vm0.result of
     Nothing -> do
       State.modify' (\(a, b) -> (a, b ++ [vmtrace vm0]))
-      vm' <- liftIO $ stToIO $ State.execStateT exec1 vm0
+      vm' <- liftIO $ stToIO $ State.execStateT (exec1 conf) vm0
       assign _1 vm'
       runWithTrace
     Just (VMFailure _) -> do

@@ -77,57 +77,6 @@ instance Monoid CexVars where
       , txContext = mempty
       }
 
--- | A model for a buffer, either in it's compressed form (for storing parsed
--- models from a solver), or as a bytestring (for presentation to users)
-data BufModel
-  = Comp CompressedBuf
-  | Flat ByteString
-  deriving (Eq, Show)
-
--- | This representation lets us store buffers of arbitrary length without
--- exhausting the available memory, it closely matches the format used by
--- smt-lib when returning models for arrays
-data CompressedBuf
-  = Base { byte :: Word8, length :: W256}
-  | Write { byte :: Word8, idx :: W256, next :: CompressedBuf }
-  deriving (Eq, Show)
-
-
--- | a final post shrinking cex, buffers here are all represented as concrete bytestrings
-data SMTCex = SMTCex
-  { vars :: Map (Expr EWord) W256
-  , addrs :: Map (Expr EAddr) Addr
-  , buffers :: Map (Expr Buf) BufModel
-  , store :: Map (Expr EAddr) (Map W256 W256)
-  , blockContext :: Map (Expr EWord) W256
-  , txContext :: Map (Expr EWord) W256
-  }
-  deriving (Eq, Show)
-
-instance Semigroup SMTCex where
-  a <> b = SMTCex
-    { vars = a.vars <> b.vars
-    , addrs = a.addrs <> b.addrs
-    , buffers = a.buffers <> b.buffers
-    , store = a.store <> b.store
-    , blockContext = a.blockContext <> b.blockContext
-    , txContext = a.txContext <> b.txContext
-    }
-
-instance Monoid SMTCex where
-  mempty = SMTCex
-    { vars = mempty
-    , addrs = mempty
-    , buffers = mempty
-    , store = mempty
-    , blockContext = mempty
-    , txContext = mempty
-    }
-
-flattenBufs :: SMTCex -> Maybe SMTCex
-flattenBufs cex = do
-  bs <- mapM collapse cex.buffers
-  pure $ cex{ buffers = bs }
 
 -- | Attempts to collapse a compressed buffer representation down to a flattened one
 collapse :: BufModel -> Maybe BufModel
@@ -322,9 +271,10 @@ referencedFrameContext expr = nubOrd $ foldTerm go [] expr
   where
     go :: Expr a -> [(Builder, [Prop])]
     go = \case
-      TxValue -> [(fromString "txvalue", [])]
-      v@(Balance a) -> [(fromString "balance_" <> formatEAddr a, [PLT v (Lit $ 2 ^ (96 :: Int))])]
-      Gas freshVar -> [(fromString ("gas_" <> show freshVar), [])]
+      o@TxValue -> [(fromRight' $ exprToSMT o, [])]
+      o@(Balance _) -> [(fromRight' $ exprToSMT o, [PLT o (Lit $ 2 ^ (96 :: Int))])]
+      o@(Gas _ _) -> [(fromRight' $ exprToSMT o, [])]
+      o@(CodeHash (LitAddr _)) -> [(fromRight' $ exprToSMT o, [])]
       _ -> []
 
 referencedBlockContext :: TraversableTerm a => a -> [(Builder, [Prop])]
@@ -378,7 +328,6 @@ assertReads props benv senv = concatMap assertRead allReads
   where
     assertRead :: (Expr EWord, Expr EWord, Expr Buf) -> [Prop]
     assertRead (_, Lit 0, _) = []
-    assertRead (idx, Lit 32, buf) = [PImpl (PGEq idx (bufLength buf)) (PEq (ReadWord idx buf) (Lit 0))]
     assertRead (idx, Lit sz, buf) = [PImpl (PGEq (Expr.add idx $ Lit offset) (bufLength buf)) (PEq (ReadByte (Expr.add idx $ Lit offset) buf) (LitByte 0)) | offset <- [(0::W256).. sz-1]]
     assertRead (_, _, _) = internalError "Cannot generate assertions for accesses of symbolic size"
 
@@ -443,20 +392,26 @@ declareConstrainAddrs names = SMT2 (["; concrete and symbolic addresses"] <> fma
     assume n = "(assert (bvugt " <> n <> " (_ bv9 160)))"
     cexvars = (mempty :: CexVars){ addrs = fmap toLazyText names }
 
+-- The gas is a tuple of (prefix, index). Within each prefix, the gas is strictly decreasing as the
+-- index increases. This function gets a map of Prefix -> [Int], and for each prefix,
+-- enforces the order
 enforceGasOrder :: [Prop] -> SMT2
-enforceGasOrder ps = SMT2 (["; gas ordering"] <> order indices) mempty mempty
+enforceGasOrder ps = SMT2 (["; gas ordering"] <> (concatMap (uncurry order) indices)) mempty mempty
   where
-    order :: [Int] -> [Builder]
-    order n = consecutivePairs n >>= \(x, y)->
+    order :: TS.Text -> [Int] -> [Builder]
+    order prefix n = consecutivePairs (nubInt n) >>= \(x, y)->
       -- The GAS instruction itself costs gas, so it's strictly decreasing
-      ["(assert (bvugt gas_" <> (fromString . show $ x) <> " gas_" <> (fromString . show $ y) <> "))"]
+      ["(assert (bvugt " <> fromRight' (exprToSMT (Gas prefix x)) <> " " <>
+        fromRight' ((exprToSMT (Gas prefix y))) <> "))"]
     consecutivePairs :: [Int] -> [(Int, Int)]
     consecutivePairs [] = []
     consecutivePairs l = zip l (tail l)
-    indices :: [Int] = nubInt $ concatMap (foldProp go mempty) ps
-    go :: Expr a -> [Int]
+    indices = Map.toList $ toMapOfLists $ concatMap (foldProp go mempty) ps
+    toMapOfLists :: [(TS.Text, Int)] -> Map.Map TS.Text [Int]
+    toMapOfLists = foldr (\(k, v) acc -> Map.insertWith (++) k [v] acc) Map.empty
+    go :: Expr a -> [(TS.Text, Int)]
     go e = case e of
-      Gas freshVar -> [freshVar]
+      Gas prefix v -> [(prefix, v)]
       _ -> []
 
 declareFrameContext :: [(Builder, [Prop])] -> Err SMT2
@@ -872,7 +827,8 @@ exprToSMT = \case
     pure $ "(store" `sp` encPrev `sp` encIdx `sp` encVal <> ")"
   SLoad idx store -> op2 "select" store idx
   LitAddr n -> pure $ fromLazyText $ "(_ bv" <> T.pack (show (into n :: Integer)) <> " 160)"
-  Gas freshVar -> pure $ fromLazyText $ "gas_"  <> (T.pack $ show freshVar)
+  CodeHash a@(LitAddr _) -> pure $ fromLazyText "codehash_" <> formatEAddr a
+  Gas prefix var -> pure $ fromLazyText $ "gas_" <> T.pack (TS.unpack prefix) <> T.pack (show var)
 
   a -> internalError $ "TODO: implement: " <> show a
   where
@@ -1059,14 +1015,13 @@ parseBlockCtx "prevrandao" = PrevRandao
 parseBlockCtx "gaslimit" = GasLimit
 parseBlockCtx "chainid" = ChainId
 parseBlockCtx "basefee" = BaseFee
-parseBlockCtx gas | TS.isPrefixOf (TS.pack "gas_") gas = Gas (textToInt $ TS.drop 4 gas)
 parseBlockCtx val = internalError $ "cannot parse '" <> (TS.unpack val) <> "' into an Expr"
 
 parseTxCtx :: TS.Text -> Expr EWord
 parseTxCtx name
   | name == "txvalue" = TxValue
   | Just a <- TS.stripPrefix "balance_" name = Balance (parseEAddr a)
-  | Just a <- TS.stripPrefix "gas_" name = Gas (textToInt a)
+  | Just a <- TS.stripPrefix "codehash_" name = CodeHash (parseEAddr a)
   | otherwise = internalError $ "cannot parse " <> (TS.unpack name) <> " into an Expr"
 
 getAddrs :: (TS.Text -> Expr EAddr) -> (Text -> IO Text) -> [TS.Text] -> IO (Map (Expr EAddr) Addr)
@@ -1140,9 +1095,7 @@ getBufs getVal bufs = foldM getBuf mempty bufs
                 :| [SortSymbol (IdIndexed "BitVec" (IxNumeral "8" :| []))]
               )
             )) ((TermSpecConstant val :| [])))
-            -> case val of
-                 SCHexadecimal "00" -> Base 0 0
-                 v -> Base (parseW8 v) len
+            -> Base (parseW8 val) len
 
           -- writing a byte over some array
           (TermApplication

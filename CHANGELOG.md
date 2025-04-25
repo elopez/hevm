@@ -31,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More simplification rules that help avoid symbolic copyslice in case of
   STATICCALL overapproximation
 - Test to make sure we don't accidentally overapproximate a working, good STATICCALL
+- Allow EXTCODESIZE/HASH, BALANCE to be abstracted to a symbolic value.
+- Allow CALL to be extracted in case `--promise-no-reent` is given, promising
+  no reentrancy of contracts. This may skip over reentrancy vulnerabilities
+  but allows much more thorough exploration of the contract
+- Allow controlling the max buffer sizes via --max-buf-size to something smaller than 2**64
+  so we don't get too large buffers as counterexamples
+- More symbolic overapproximation for Balance and ExtCodeHash opcodes, fixing
+  CodeHash SMT representation
+- Add deployment code flag to the `equivalenceCheck` function
+- PNeg + PGT/PGEq/PLeq/PLT simplification rules
+- We no longer dispatch Props to SMT that can be solved by a simplification
+- Allow user to change the verbosity level via `--verb`. For the moment, this is only to
+  print some warnings related to zero-address dereference and to print `hemv test`'s
+  output in case of failure
+- Simple test cases for the CLI
+- Allow limiting the branch depth and width limitation via --max-depth and --max-width
 
 ## Fixed
 - We now try to simplify expressions fully before trying to cast them to a concrete value
@@ -44,11 +60,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When cheatcode is missing, we produce a partial execution warning
 - Size of calldata can be up to 2**64, not 256. This is now reflected in the documentation
 - We now have less noise during test runs, and assert more about symbolic copyslice tests
+- CopySlice rewrite rule is now less strict while still being sound
+- Assumptions about reading from buffer after its size are now the same in all cases.
+  Previously, they were too weak in case of reading 32 bytes.
+- The equivalence checker now is able to prove that an empty store is
+  equivalent to a store with all slots initialized to 0.
+- Equivalence checking was incorrectly assuming that overapproximated values
+  were sequentially equivalent. We now distinguish these symbolic values with
+  `A-` and `B-`
+- Buffer of all zeroes was interpreted as an empty buffer during parsing SMT model.
+  The length of the buffer is now properly taken into account.
+- It was possible to enter an infinite recursion when trying to shrink a buffer found by
+  the SMT solver. We now properly detect that it is not possible to shrink the buffer.
 
 ## Changed
 - Warnings now lead printing FAIL. This way, users don't accidentally think that
   their contract is correct when there were cases/branches that hevm could not
   fully explore. Printing of issues is also now much more organized
+- Expressions that are commutative are now canonicalized to have the smaller
+  value on the LHS. This can significantly help with simplifications, automatically
+  determining when (Eq a b) is true when a==b modulo commutativity
+- `hevm test`'s flag ` --verbose` is now `--verb`, which also increases verbosity
+  for other elements of the system
+- Add `--arrays-exp` to cvc5 options.
+- We now use Options.Applicative and a rather different way of parsing CLI options.
+  This should give us much better control over the CLI options and their parsing.
+- block.number can now be symbolic. This only affects library use of hevm
+- Removed `--smtoutput` since it was never used
+- We now build with -DCMAKE_POLICY_VERSION_MINIMUM=3.5 libff, as cmake deprecated 3.5
+- CheckSatResult has now been unified with ProofResult via SMTResult
+- Buffers are now handled more lazily when inspecting a model, which avoids some
+  unnecesary internal errors.
 
 ## [0.54.2] - 2024-12-12
 

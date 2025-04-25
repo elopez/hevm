@@ -42,8 +42,11 @@ data Action t s a where
   -- | Wait for a query to be resolved
   Wait :: Query t s -> Action t s ()
 
-  -- | Multiple things can happen
+  -- | Two things can happen
   Fork :: RunBoth s -> Action Symbolic s ()
+
+  -- | Many (>2) things can happen
+  ForkMany :: RunAll s -> Action Symbolic s ()
 
   -- | Embed a VM state transformation
   EVM  :: EVM t s a -> Action t s a
@@ -64,6 +67,9 @@ wait = singleton . Wait
 
 fork :: RunBoth s -> Stepper Symbolic s ()
 fork = singleton . Fork
+
+forkMany :: RunAll s -> Stepper Symbolic s ()
+forkMany = singleton . ForkMany
 
 evm :: EVM t s a -> Stepper t s a
 evm = singleton . EVM
@@ -89,6 +95,8 @@ runFully = do
       wait q >> runFully
     Just (HandleEffect (RunBoth q)) ->
       fork q >> runFully
+    Just (HandleEffect (RunAll q)) ->
+      forkMany q >> runFully
     Just _ ->
       pure vm
 
@@ -108,7 +116,8 @@ interpret fetcher vm = eval . view
     eval (action :>>= k) =
       case action of
         Exec -> do
-          (r, vm') <- liftIO $ stToIO $ runStateT EVM.Exec.exec vm
+          conf <- readConfig
+          (r, vm') <- liftIO $ stToIO $ runStateT (EVM.Exec.exec conf) vm
           interpret fetcher vm' (k r)
         Wait q -> do
           m <- fetcher q
