@@ -384,7 +384,7 @@ exec1 conf = do
               else do
                 bytes <- readMemory xOffset xSize
                 let (topics, xs') = Stack.splitAt (into n) xs
-                    logs'         = (LogEntry (WAddr self) bytes $ toList topics) : vm.logs
+                    logs'         = (LogEntry (WAddr self) bytes $ Stack.toList topics) : vm.logs
                 burnLog xSize n $
                   accessMemoryRange xOffset xSize $ do
                     traceTopLog logs'
