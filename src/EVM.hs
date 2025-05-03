@@ -49,8 +49,10 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, fromJust, isJust, isNothing)
 import Data.Set (insert, member, fromList)
-import Data.Sequence (Seq ((:<|)))
+import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
+import EVM.Stack (Stack((:<|)))
+import EVM.Stack qualified as Stack
 import Data.Text (unpack, pack)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Tree
@@ -381,7 +383,7 @@ exec1 conf = do
               then underrun
               else do
                 bytes <- readMemory xOffset xSize
-                let (topics, xs') = Seq.splitAt (into n) xs
+                let (topics, xs') = Stack.splitAt (into n) xs
                     logs'         = (LogEntry (WAddr self) bytes $ toList topics) : vm.logs
                 burnLog xSize n $
                   accessMemoryRange xOffset xSize $ do
@@ -440,7 +442,7 @@ exec1 conf = do
                         (pure $ Lit (keccak' bs))
                     buf -> pure $ Keccak buf
                   next
-                  assign (#state % #stack) (hash <| xs)
+                  assign (#state % #stack) (hash :<| xs)
             _ -> underrun
 
         OpAddress ->
@@ -649,7 +651,7 @@ exec1 conf = do
                   next
                   buf <- readMemory x (Lit 32)
                   let w = Expr.readWordFromBytes (Lit 0) buf
-                  assign (#state % #stack) (w <| xs)
+                  assign (#state % #stack) (w :<| xs)
             _ -> underrun
 
 
@@ -730,7 +732,7 @@ exec1 conf = do
               burn cost $
                 accessStorage self x $ \y -> do
                   next
-                  assign (#state % #stack) (y <| xs)
+                  assign (#state % #stack) (y :<| xs)
             _ -> underrun
 
         OpSstore ->
@@ -789,7 +791,7 @@ exec1 conf = do
               burn g_warm_storage_read $
                 accessTStorage self x $ \y -> do
                   next
-                  assign (#state % #stack) (y <| xs)
+                  assign (#state % #stack) (y :<| xs)
             _ -> underrun
 
         OpTstore ->
@@ -845,7 +847,7 @@ exec1 conf = do
             base:<|exponent:<|xs ->
               burnExp exponent $ do
                 next
-                (#state % #stack) .= Expr.exp base exponent <| xs
+                (#state % #stack) .= Expr.exp base exponent :<| xs
             _ -> underrun
 
         OpSignextend -> stackOp2 g_low Expr.sex
@@ -1095,7 +1097,7 @@ callChecks
   -> Expr EWord
   -> Expr EWord
   -> Expr EWord
-  -> Seq (Expr EWord)
+  -> Stack (Expr EWord)
   -- continuation with gas available for call
   -> (Gas t -> EVM t s ())
   -> EVM t s ()
@@ -1112,7 +1114,7 @@ callChecks this xGas xContext xTo xValue xInOffset xInSize xOutOffset xOutSize x
         let checkCallDepth =
               if length vm.frames >= 1024
               then do
-                assign (#state % #stack) (Lit 0 <| xs)
+                assign (#state % #stack) (Lit 0 :<| xs)
                 assign (#state % #returndata) mempty
                 pushTrace $ ErrorTrace CallDepthLimitReached
                 next
@@ -1126,7 +1128,7 @@ callChecks this xGas xContext xTo xValue xInOffset xInSize xOutOffset xOutSize x
             burn (cost - gas') $
               branch (?conf).maxDepth (Expr.gt xValue fb) $ \case
                 True -> do
-                  assign (#state % #stack) (Lit 0 <| xs)
+                  assign (#state % #stack) (Lit 0 :<| xs)
                   assign (#state % #returndata) mempty
                   pushTrace $ ErrorTrace (BalanceTooLow xValue this.balance)
                   next
@@ -1155,7 +1157,7 @@ precompiledContract
   -> Addr
   -> Expr EWord
   -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord
-  -> Seq (Expr EWord)
+  -> Stack (Expr EWord)
   -> EVM t s ()
 precompiledContract this xGas precompileAddr recipient xValue inOffset inSize outOffset outSize xs
   = callChecks this xGas (LitAddr recipient) (LitAddr precompileAddr) xValue inOffset inSize outOffset outSize xs $ \gas' ->
@@ -1181,7 +1183,7 @@ precompiledContract this xGas precompileAddr recipient xValue inOffset inSize ou
 executePrecompile
   :: (?op :: Word8, VMOps t)
   => Addr
-  -> Gas t -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord -> Seq (Expr EWord)
+  -> Gas t -> Expr EWord -> Expr EWord -> Expr EWord -> Expr EWord -> Stack (Expr EWord)
   -> EVM t s ()
 executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = do
   vm <- get
@@ -1190,12 +1192,12 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
       cost = costOfPrecompile fees preCompileAddr input
       notImplemented = internalError $ "precompile at address " <> show preCompileAddr <> " not yet implemented"
       precompileFail = burn' (subGas gasCap cost) $ do
-                         assign (#state % #stack) (Lit 0 <| xs)
+                         assign (#state % #stack) (Lit 0 :<| xs)
                          pushTrace $ ErrorTrace PrecompileFailure
                          next
   if not (enoughGas cost gasCap) then
     burn' gasCap $ do
-      assign (#state % #stack) (Lit 0 <| xs)
+      assign (#state % #stack) (Lit 0 :<| xs)
       next
   else burn cost $
     case preCompileAddr of
@@ -1206,11 +1208,11 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           case EVM.Precompiled.execute 0x1 (truncpadlit 128 input') 32 of
             Nothing -> do
               -- return no output for invalid signature
-              assign (#state % #stack) (Lit 1 <| xs)
+              assign (#state % #stack) (Lit 1 :<| xs)
               assign (#state % #returndata) mempty
               next
             Just output -> do
-              assign (#state % #stack) (Lit 1 <| xs)
+              assign (#state % #stack) (Lit 1 :<| xs)
               assign (#state % #returndata) (ConcreteBuf output)
               copyBytesToMemory (ConcreteBuf output) outSize (Lit 0) outOffset
               next
@@ -1221,7 +1223,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           let
             hash = sha256Buf input'
             sha256Buf x = ConcreteBuf $ BA.convert (Crypto.hash x :: Digest SHA256)
-          assign (#state % #stack) (Lit 1 <| xs)
+          assign (#state % #stack) (Lit 1 :<| xs)
           assign (#state % #returndata) hash
           copyBytesToMemory hash outSize (Lit 0) outOffset
           next
@@ -1234,14 +1236,14 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             padding = BS.pack $ replicate 12 0
             hash' = BA.convert (Crypto.hash input' :: Digest RIPEMD160)
             hash  = ConcreteBuf $ padding <> hash'
-          assign (#state % #stack) (Lit 1 <| xs)
+          assign (#state % #stack) (Lit 1 :<| xs)
           assign (#state % #returndata) hash
           copyBytesToMemory hash outSize (Lit 0) outOffset
           next
 
       -- IDENTITY
       0x4 -> do
-          assign (#state % #stack) (Lit 1 <| xs)
+          assign (#state % #stack) (Lit 1 :<| xs)
           assign (#state % #returndata) input
           copyCallBytesToMemory input outSize outOffset
           next
@@ -1263,7 +1265,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
                   m = asInteger $ lazySlice (96 + lenb + lene) lenm input'
                 in
                   padLeft (unsafeInto lenm) (asBE (expFast b e m))
-          assign (#state % #stack) (Lit 1 <| xs)
+          assign (#state % #stack) (Lit 1 :<| xs)
           assign (#state % #returndata) output
           copyBytesToMemory output outSize (Lit 0) outOffset
           next
@@ -1276,7 +1278,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             Nothing -> precompileFail
             Just output -> do
               let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-              assign (#state % #stack) (Lit 1 <| xs)
+              assign (#state % #stack) (Lit 1 :<| xs)
               assign (#state % #returndata) truncpaddedOutput
               copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
               next
@@ -1289,7 +1291,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           Nothing -> precompileFail
           Just output -> do
             let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-            assign (#state % #stack) (Lit 1 <| xs)
+            assign (#state % #stack) (Lit 1 :<| xs)
             assign (#state % #returndata) truncpaddedOutput
             copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
             next
@@ -1302,7 +1304,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
           Nothing -> precompileFail
           Just output -> do
             let truncpaddedOutput = ConcreteBuf $ truncpadlit 32 output
-            assign (#state % #stack) (Lit 1 <| xs)
+            assign (#state % #stack) (Lit 1 :<| xs)
             assign (#state % #returndata) truncpaddedOutput
             copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
             next
@@ -1315,7 +1317,7 @@ executePrecompile preCompileAddr gasCap inOffset inSize outOffset outSize xs  = 
             (213, True) -> case EVM.Precompiled.execute 0x9 input' 64 of
               Just output -> do
                 let truncpaddedOutput = ConcreteBuf $ truncpadlit 64 output
-                assign (#state % #stack) (Lit 1 <| xs)
+                assign (#state % #stack) (Lit 1 :<| xs)
                 assign (#state % #returndata) truncpaddedOutput
                 copyBytesToMemory truncpaddedOutput outSize (Lit 0) outOffset
                 next
@@ -1614,7 +1616,7 @@ unexpectedSymArgW msg n = unexpectedSymArg msg [n]
 unknownCode :: VMOps t => Expr EAddr -> EVM t s ()
 unknownCode n = unexpectedSymArg "call target has unknown code" [n]
 
-freshBufFallback :: (?conf :: Config, VMOps t, ?op :: Word8) => Seq (Expr EWord) -> EVM t s ()
+freshBufFallback :: (?conf :: Config, VMOps t, ?op :: Word8) => Stack (Expr EWord) -> EVM t s ()
 freshBufFallback xs = do
   -- Reset caller if needed
   resetCaller <- use $ #state % #resetCaller
@@ -1628,9 +1630,9 @@ freshBufFallback xs = do
   let freshReturndataExpr = AbstractBuf (opName <> "-result-data-fresh-" <> (pack . show) freshVar)
   modifying #constraints ((:) (PLEq (bufLength freshReturndataExpr) (Lit (2 ^ ?conf.maxBufSize))))
   assign (#state % #returndata) freshReturndataExpr
-  next >> assign (#state % #stack) (freshVarExpr <| xs)
+  next >> assign (#state % #stack) (freshVarExpr :<| xs)
 
-freshVarFallback:: (VMOps t, ?op :: Word8) => Seq (Expr EWord) -> Expr a -> EVM t s ()
+freshVarFallback:: (VMOps t, ?op :: Word8) => Stack (Expr EWord) -> Expr a -> EVM t s ()
 freshVarFallback xs _ = do
   -- Reset caller if needed
   resetCaller <- use $ #state % #resetCaller
@@ -1640,7 +1642,7 @@ freshVarFallback xs _ = do
   assign #freshVar (freshVar + 1)
   let opName = pack $ show $ getOp ?op
   let freshVarExpr = Var (opName <> "-result-stack-fresh-" <> (pack . show) freshVar)
-  next >> assign (#state % #stack) (freshVarExpr <| xs)
+  next >> assign (#state % #stack) (freshVarExpr :<| xs)
 
 forceConcrete :: (?conf :: Config, VMOps t) => Expr EWord -> String -> (W256 -> EVM t s ()) -> EVM t s ()
 forceConcrete n = forceConcreteLimitSz n 32
@@ -1729,7 +1731,7 @@ cheatCode = LitAddr $ unsafeInto (keccak' "hevm cheat code")
 
 cheat
   :: forall t s . (?conf :: Config, ?op :: Word8, VMOps t)
-  => Gas t -> (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord) -> Seq (Expr EWord)
+  => Gas t -> (Expr EWord, Expr EWord) -> (Expr EWord, Expr EWord) -> Stack (Expr EWord)
   -> EVM t s ()
 cheat gas (inOffset, inSize) (outOffset, outSize) xs = do
   vm <- get
@@ -2083,7 +2085,7 @@ delegateCall
   -> Expr EWord
   -> Expr EWord
   -> Expr EWord
-  -> Seq (Expr EWord)
+  -> Stack (Expr EWord)
   -> (Expr EAddr -> EVM t s ()) -- fallback
   -> (Expr EAddr -> EVM t s ()) -- continue
   -> EVM t s ()
@@ -2157,26 +2159,26 @@ collision c' = case c' of
 
 create :: forall t s. (?op :: Word8, ?conf::Config, VMOps t)
   => Expr EAddr -> Contract
-  -> Expr EWord -> Gas t -> Expr EWord -> Seq (Expr EWord) -> Expr EAddr -> Expr Buf -> EVM t s ()
+  -> Expr EWord -> Gas t -> Expr EWord -> Stack (Expr EWord) -> Expr EAddr -> Expr Buf -> EVM t s ()
 create self this xSize xGas xValue xs newAddr initCode = do
   vm0 <- get
   -- are we exceeding the max init code size
   if xSize > Lit (vm0.block.maxCodeSize * 2)
   then do
-    assign (#state % #stack) (Lit 0 <| xs)
+    assign (#state % #stack) (Lit 0 :<| xs)
     assign (#state % #returndata) mempty
     vmError $ MaxInitCodeSizeExceeded (vm0.block.maxCodeSize * 2) xSize
   -- are we overflowing the nonce
   else if this.nonce == Just maxBound
   then do
-    assign (#state % #stack) (Lit 0 <| xs)
+    assign (#state % #stack) (Lit 0 :<| xs)
     assign (#state % #returndata) mempty
     pushTrace $ ErrorTrace NonceOverflow
     next
   -- are we overflowing the stack
   else if length vm0.frames >= 1024
   then do
-    assign (#state % #stack) (Lit 0 <| xs)
+    assign (#state % #stack) (Lit 0 :<| xs)
     assign (#state % #returndata) mempty
     pushTrace $ ErrorTrace CallDepthLimitReached
     next
@@ -2186,14 +2188,14 @@ create self this xSize xGas xValue xs newAddr initCode = do
   -- safe to perform statically
   else if collision $ Map.lookup newAddr vm0.env.contracts
   then burn' xGas $ do
-    assign (#state % #stack) (Lit 0 <| xs)
+    assign (#state % #stack) (Lit 0 :<| xs)
     assign (#state % #returndata) mempty
     modifying (#env % #contracts % ix self % #nonce) (fmap ((+) 1))
     next
   -- do we have enough balance
   else branch (?conf).maxDepth (Expr.gt xValue this.balance) $ \case
       True -> do
-        assign (#state % #stack) (Lit 0 <| xs)
+        assign (#state % #stack) (Lit 0 :<| xs)
         assign (#state % #returndata) mempty
         pushTrace $ ErrorTrace $ BalanceTooLow xValue this.balance
         next
@@ -2628,11 +2630,11 @@ push :: W256 -> EVM t s ()
 push = pushSym . Lit
 
 pushSym :: Expr EWord -> EVM t s ()
-pushSym x = #state % #stack %= (x <|)
+pushSym x = #state % #stack %= (x :<|)
 
 pushAddr :: Expr EAddr -> EVM t s ()
-pushAddr (LitAddr x) = #state % #stack %= (Lit (into x) <|)
-pushAddr x@(SymAddr _) = #state % #stack %= (WAddr x <|)
+pushAddr (LitAddr x) = #state % #stack %= (Lit (into x) :<|)
+pushAddr x@(SymAddr _) = #state % #stack %= (WAddr x :<|)
 pushAddr (GVar _) = internalError "Unexpected GVar"
 
 stackOp1
@@ -2646,7 +2648,7 @@ stackOp1 cost f =
       burn cost $ do
         next
         let !y = f x
-        #state % #stack .= y <| xs
+        #state % #stack .= y :<| xs
     _ ->
       underrun
 
@@ -2660,7 +2662,7 @@ stackOp2 cost f =
     x:<|y:<|xs ->
       burn cost $ do
         next
-        #state % #stack .= f x y <| xs
+        #state % #stack .= f x y :<| xs
     _ ->
       underrun
 
@@ -2674,13 +2676,13 @@ stackOp3 cost f =
     x:<|y:<|z:<|xs ->
       burn cost $ do
       next
-      (#state % #stack) .= f x y z <| xs
+      (#state % #stack) .= f x y z :<| xs
     _ ->
       underrun
 
 -- * Bytecode data functions
 
-checkJump :: VMOps t => Int -> Seq (Expr EWord) -> EVM t s ()
+checkJump :: VMOps t => Int -> Stack (Expr EWord) -> EVM t s ()
 checkJump x xs = noJumpIntoInitData x $ do
   vm <- get
   case isValidJumpDest vm x of

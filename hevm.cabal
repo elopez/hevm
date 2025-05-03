@@ -108,6 +108,7 @@ library
     EVM.Precompiled,
     EVM.RLP,
     EVM.Solidity,
+    EVM.Stack,
     EVM.Stepper,
     EVM.SymExec,
     EVM.Traversals,

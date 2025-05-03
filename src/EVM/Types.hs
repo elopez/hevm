@@ -54,6 +54,7 @@ import Numeric (readHex, showHex)
 import Options.Generic
 import Optics.TH
 import EVM.FeeSchedule (FeeSchedule (..))
+import EVM.Stack (Stack)
 import Data.Kind (Type)
 
 import Text.Regex.TDFA qualified as Regex
@@ -684,7 +685,7 @@ data VM (t :: VMType) s = VM
   , traces         :: Zipper.TreePos Zipper.Empty Trace
   , cache          :: Cache
   , burned         :: !(Gas t)
-  , iterations     :: Map CodeLocation (Int, Seq (Expr EWord))
+  , iterations     :: Map CodeLocation (Int, Stack (Expr EWord))
   -- ^ how many times we've visited a loc, and what the contents of the stack were when we were there last
   , constraints    :: [Prop]
   , config         :: RuntimeConfig
@@ -774,7 +775,7 @@ data FrameState (t :: VMType) s = FrameState
   , codeContract :: Expr EAddr
   , code         :: ContractCode
   , pc           :: {-# UNPACK #-} !Int
-  , stack        :: Seq (Expr EWord)
+  , stack        :: Stack (Expr EWord)
   , memory       :: Memory s
   , memorySize   :: Word64
   , calldata     :: Expr Buf

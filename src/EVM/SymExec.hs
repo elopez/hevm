@@ -22,8 +22,6 @@ import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Map.Merge.Strict qualified as Map
-import Data.Sequence (Seq)
-import Data.Sequence qualified as Seq
 import Data.Set (Set, isSubsetOf)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -43,6 +41,8 @@ import EVM.FeeSchedule (feeSchedule)
 import EVM.Format (formatExpr, formatPartial, formatPartialShort, showVal, indent, formatBinary, formatProp, formatState, formatError)
 import EVM.SMT qualified as SMT
 import EVM.Solvers
+import EVM.Stack (Stack)
+import EVM.Stack qualified as Stack
 import EVM.Stepper (Stepper)
 import EVM.Stepper qualified as Stepper
 import EVM.Traversals
@@ -442,11 +442,11 @@ isLoopHead :: LoopHeuristic -> VM Symbolic s -> Maybe Bool
 isLoopHead Naive _ = Just True
 isLoopHead StackBased vm = let
     loc = getCodeLocation vm
-    oldIters ::Maybe (Int, Seq (Expr EWord)) = Map.lookup loc vm.iterations
+    oldIters ::Maybe (Int, Stack (Expr EWord)) = Map.lookup loc vm.iterations
     isValid (Lit wrd) = wrd <= unsafeInto (maxBound :: Int) && isValidJumpDest vm (unsafeInto wrd)
     isValid _ = False
   in case oldIters of
-       Just (_, oldStack) -> Just $ Seq.filter isValid oldStack == Seq.filter isValid vm.state.stack
+       Just (_, oldStack) -> Just $ Stack.filter isValid oldStack == Stack.filter isValid vm.state.stack
        Nothing -> Nothing
 
 type Precondition s = VM Symbolic s -> Prop
