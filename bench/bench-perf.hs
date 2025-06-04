@@ -52,7 +52,7 @@ vm0Opts c =
       priorityFee = 0,
       gaslimit = 0xffffffffffffffff,
       coinbase = LitAddr 0,
-      number = Lit 0,
+      number = 0,
       timestamp = Lit 0,
       blockGaslimit = 0xffffffffffffffff,
       gasprice = 0,
@@ -82,9 +82,7 @@ vmOptsToTestVMParams v =
         Lit x -> x
         _ -> 0,
       coinbase = v.coinbase,
-      number = case v.number of
-        Lit x -> x
-        _ -> 0,
+      number = v.number,
       timestamp = case v.timestamp of
         Lit x -> x
         _ -> 0,
@@ -120,7 +118,7 @@ main = do
                    , ("funcCall", funcCall, Nothing)
                    , ("contractCreation", contractCreation, Nothing)
                    , ("contractCreationMem", contractCreationMem, Nothing)
-                   , ("arrayCreationMem", arrayCreationMem, Just 9)
+                   , ("arrayCreationMem", arrayCreationMem, Just 7)
                    , ("mapStorage", mapStorage, Nothing)
                    ]
   defaultMain =<< mapM f benchmarks
