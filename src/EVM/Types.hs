@@ -35,7 +35,7 @@ import Data.ByteString.Lazy (toStrict)
 import Data.Data
 import Data.Int (Int64)
 import Data.Word (Word8, Word32, Word64, byteSwap32, byteSwap64)
-import Data.ByteString.Internal (unsafeCreate)
+import Data.ByteString.Internal (unsafeCreate, accursedUnutterablePerformIO, toForeignPtr0)
 import Data.DoubleWord
 import Data.DoubleWord.TH
 import Data.Map (Map)
@@ -52,8 +52,9 @@ import Data.Tree.Zipper qualified as Zipper
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as VS
 import Data.Vector.Storable.Mutable (STVector)
-import Foreign.Storable (poke)
+import Foreign.ForeignPtr (withForeignPtr)
 import Foreign.Ptr (castPtr, plusPtr)
+import Foreign.Storable (peek, poke)
 import Numeric (readHex, showHex)
 import Options.Generic
 import Optics.TH
@@ -1411,18 +1412,14 @@ instance Show Nibble where
 -- Conversions -------------------------------------------------------------------------------------
 
 word256 :: ByteString -> Word256
-word256 xs | BS.length xs == 1 =
-  -- optimize one byte pushes
-  Word256 (Word128 0 0) (Word128 0 (into $ BS.head xs))
-word256 xs = case Cereal.runGet m (padLeft 32 xs) of
-               Left _ -> internalError "should not happen"
-               Right x -> x
+word256 xs = accursedUnutterablePerformIO $ withForeignPtr (fst $ toForeignPtr0 $ padLeft 32 xs) $ \p -> do
+    let ptr = castPtr p
+    a <- peek $ ptr `plusPtr`  0
+    b <- peek $ ptr `plusPtr`  8
+    c <- peek $ ptr `plusPtr` 16
+    d <- peek $ ptr `plusPtr` 24
+    pure $ Word256 (Word128 (hton64 a) (hton64 b)) (Word128 (hton64 c) (hton64 d))
   where
-    m = do a <- Cereal.getWord64be
-           b <- Cereal.getWord64be
-           c <- Cereal.getWord64be
-           d <- Cereal.getWord64be
-           pure $ Word256 (Word128 a b) (Word128 c d)
 
 word :: ByteString -> W256
 word = W256 . word256
@@ -1462,26 +1459,26 @@ word256Bytes :: W256 -> ByteString
 word256Bytes (W256 (Word256 (Word128 a b) (Word128 c d))) = 
   unsafeCreate 32 $ \ptr -> do
     let ptr' = castPtr ptr
-    poke (ptr' `plusPtr`  0) $ swap a
-    poke (ptr' `plusPtr`  8) $ swap b
-    poke (ptr' `plusPtr` 16) $ swap c
-    poke (ptr' `plusPtr` 24) $ swap d
-  where
-    swap | targetByteOrder == LittleEndian = byteSwap64
-         | otherwise = id
+    poke (ptr' `plusPtr`  0) $ hton64 a
+    poke (ptr' `plusPtr`  8) $ hton64 b
+    poke (ptr' `plusPtr` 16) $ hton64 c
+    poke (ptr' `plusPtr` 24) $ hton64 d
 
 word160Bytes :: Addr -> ByteString
 word160Bytes (Addr (Word160 a (Word128 b c))) = 
   unsafeCreate 20 $ \ptr -> do
     let ptr' = castPtr ptr
-    poke (ptr' `plusPtr`  0) $ swap32 a
-    poke (ptr' `plusPtr`  4) $ swap64 b
-    poke (ptr' `plusPtr` 12) $ swap64 c
-  where
-    swap32 | targetByteOrder == LittleEndian = byteSwap32
-           | otherwise = id
-    swap64 | targetByteOrder == LittleEndian = byteSwap64
-           | otherwise = id
+    poke (ptr' `plusPtr`  0) $ hton32 a
+    poke (ptr' `plusPtr`  4) $ hton64 b
+    poke (ptr' `plusPtr` 12) $ hton64 c
+
+hton32 :: Word32 -> Word32
+hton32 | targetByteOrder == LittleEndian = byteSwap32
+       | otherwise = id
+
+hton64 :: Word64 -> Word64
+hton64 | targetByteOrder == LittleEndian = byteSwap64
+       | otherwise = id
 
 -- Get first and second Nibble from byte
 hi, lo :: Word8 -> Nibble
