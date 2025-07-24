@@ -1412,6 +1412,9 @@ instance Show Nibble where
 -- Conversions -------------------------------------------------------------------------------------
 
 word256 :: ByteString -> Word256
+word256 xs | BS.length xs == 1 =
+  -- optimize one byte pushes
+  Word256 (Word128 0 0) (Word128 0 (into $ BS.head xs))
 word256 xs = accursedUnutterablePerformIO $ withForeignPtr (fst $ toForeignPtr0 $ padLeft 32 xs) $ \p -> do
     let ptr = castPtr p
     a <- peek $ ptr `plusPtr`  0
