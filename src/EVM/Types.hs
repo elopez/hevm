@@ -12,6 +12,7 @@
 module EVM.Types where
 
 import GHC.Stack (HasCallStack, prettyCallStack, callStack)
+import GHC.ByteOrder (targetByteOrder, ByteOrder(..))
 import Control.Arrow ((>>>))
 import Control.Monad (mzero)
 import Control.Monad.ST (ST)
@@ -33,7 +34,8 @@ import Data.ByteString.Char8 qualified as Char8
 import Data.ByteString.Lazy (toStrict)
 import Data.Data
 import Data.Int (Int64)
-import Data.Word (Word8, Word32, Word64)
+import Data.Word (Word8, Word32, Word64, byteSwap32, byteSwap64)
+import Data.ByteString.Internal (unsafeCreate)
 import Data.DoubleWord
 import Data.DoubleWord.TH
 import Data.Map (Map)
@@ -50,6 +52,8 @@ import Data.Tree.Zipper qualified as Zipper
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as VS
 import Data.Vector.Storable.Mutable (STVector)
+import Foreign.Storable (poke)
+import Foreign.Ptr (castPtr, plusPtr)
 import Numeric (readHex, showHex)
 import Options.Generic
 import Optics.TH
@@ -1433,13 +1437,51 @@ asBE 0 = mempty
 asBE x = asBE (x `div` 256)
   <> BS.pack [fromIntegral $ x `mod` 256]
 
-word256Bytes :: W256 -> ByteString
-word256Bytes (W256 (Word256 (Word128 a b) (Word128 c d))) =
+slow_word256Bytes :: W256 -> ByteString
+slow_word256Bytes (W256 (Word256 (Word128 a b) (Word128 c d))) =
   Cereal.encode (a, b, c, d)
 
-word160Bytes :: Addr -> ByteString
-word160Bytes (Addr (Word160 a (Word128 b c))) =
+slow_word160Bytes :: Addr -> ByteString
+slow_word160Bytes (Addr (Word160 a (Word128 b c))) =
   Cereal.encode (a, b, c)
+
+{-
+word256Bytes :: W256 -> ByteString
+word256Bytes (W256 (Word256 (Word128 a b) (Word128 c d))) = unsafePerformIO $ do
+  ptr <- mallocBytes 32
+  poke ptr $ byteSwap64 a
+  poke (ptr `plusPtr` 8) $ byteSwap64 b
+  poke (ptr `plusPtr` 16) $ byteSwap64 c
+  poke (ptr `plusPtr` 24) $ byteSwap64 d
+  bs <- BS.packCStringLen (castPtr ptr, 32)
+  free ptr
+  return bs
+-}
+
+word256Bytes :: W256 -> ByteString
+word256Bytes (W256 (Word256 (Word128 a b) (Word128 c d))) = 
+  unsafeCreate 32 $ \ptr -> do
+    let ptr' = castPtr ptr
+    poke (ptr' `plusPtr`  0) $ swap a
+    poke (ptr' `plusPtr`  8) $ swap b
+    poke (ptr' `plusPtr` 16) $ swap c
+    poke (ptr' `plusPtr` 24) $ swap d
+  where
+    swap | targetByteOrder == LittleEndian = byteSwap64
+         | otherwise = id
+
+word160Bytes :: Addr -> ByteString
+word160Bytes (Addr (Word160 a (Word128 b c))) = 
+  unsafeCreate 20 $ \ptr -> do
+    let ptr' = castPtr ptr
+    poke (ptr' `plusPtr`  0) $ swap32 a
+    poke (ptr' `plusPtr`  4) $ swap64 b
+    poke (ptr' `plusPtr` 12) $ swap64 c
+  where
+    swap32 | targetByteOrder == LittleEndian = byteSwap32
+           | otherwise = id
+    swap64 | targetByteOrder == LittleEndian = byteSwap64
+           | otherwise = id
 
 -- Get first and second Nibble from byte
 hi, lo :: Word8 -> Nibble
