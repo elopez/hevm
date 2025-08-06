@@ -864,7 +864,7 @@ exec1 conf = do
                 let (cost, gas') = costOfCreate fees availableGas xSize False
 
                 -- handle `prank`
-                let from' = fromMaybe self vm.state.overrideCaller
+                let !from' = fromMaybe self vm.state.overrideCaller
                 resetCaller <- use (#state % #resetCaller)
                 when resetCaller $ do
                   assign (#state % #overrideCaller) Nothing
@@ -900,9 +900,9 @@ exec1 conf = do
                           \callee -> do
                             let from' = fromMaybe self overrideC
                             zoom #state $ do
-                              assign #callvalue xValue
-                              assign #caller from'
-                              assign #contract callee
+                              assign' #callvalue xValue
+                              assign' #caller from'
+                              assign' #contract callee
                             touchAccount from'
                             touchAccount callee
                             transfer from' callee xValue
@@ -919,8 +919,8 @@ exec1 conf = do
                     overrideC <- use $ #state % #overrideCaller
                     delegateCall this gas xTo self xValue xInOffset xInSize xOutOffset xOutSize xs unknownCode $ \_ -> do
                       zoom #state $ do
-                        assign #callvalue xValue
-                        assign #caller $ fromMaybe self overrideC
+                        assign' #callvalue xValue
+                        assign' #caller $ fromMaybe self overrideC
                       touchAccount self
             _ -> underrun
 
@@ -980,7 +980,7 @@ exec1 conf = do
                   forceConcreteBuf buf "CREATE2" $
                     \initCode -> do
                       -- handle `prank`
-                      let from' = fromMaybe self vm.state.overrideCaller
+                      let !from' = fromMaybe self vm.state.overrideCaller
                       resetCaller <- use (#state % #resetCaller)
                       when resetCaller $ do
                         assign (#state % #overrideCaller) Nothing
@@ -1005,10 +1005,10 @@ exec1 conf = do
                   delegateCall this gas xTo' xTo' (Lit 0) xInOffset xInSize xOutOffset xOutSize xs (const fallback) $
                     \callee -> do
                       zoom #state $ do
-                        assign #callvalue (Lit 0)
-                        assign #caller $ fromMaybe self overrideC
-                        assign #contract callee
-                        assign #static True
+                        assign' #callvalue (Lit 0)
+                        assign' #caller $ fromMaybe self overrideC
+                        assign' #contract callee
+                        assign' #static True
                       touchAccount self
                       touchAccount callee
                 where
@@ -1363,10 +1363,10 @@ noop :: Monad m => m ()
 noop = pure ()
 
 pushTo :: MonadState s m => Lens s s [a] [a] -> a -> m ()
-pushTo f x = f %= (x :)
+pushTo f x = modifying' f (x :)
 
 pushToSequence :: MonadState s m => Setter s s (Seq a) (Seq a) -> a -> m ()
-pushToSequence f x = f %= (Seq.|> x)
+pushToSequence f x = modifying' f (Seq.|> x)
 
 getCodeLocation :: VM t s -> CodeLocation
 getCodeLocation vm = (vm.state.contract, vm.state.pc)
@@ -1480,7 +1480,7 @@ accessTStorage addr slot continue = do
         accessTStorage addr slot continue
 
 clearTStorages :: EVM t s ()
-clearTStorages = (#env % #contracts) %= fmap (\c -> c { tStorage = ConcreteStore mempty } :: Contract)
+clearTStorages = modifying' (#env % #contracts) $ fmap (\c -> c { tStorage = ConcreteStore mempty } :: Contract)
 
 accountExists :: Expr EAddr -> VM t s -> Bool
 accountExists addr vm =
@@ -1717,7 +1717,7 @@ accessAccountForGas :: Expr EAddr -> EVM t s Bool
 accessAccountForGas addr = do
   accessedAddrs <- use (#tx % #subState % #accessedAddresses)
   let accessed = member addr accessedAddrs
-  assign (#tx % #subState % #accessedAddresses) (insert addr accessedAddrs)
+  assign' (#tx % #subState % #accessedAddresses) (insert addr accessedAddrs)
   pure accessed
 
 -- | returns a wrapped boolean- if true, this slot has been touched before in the txn (warm gas cost as in EIP 2929)
@@ -1750,7 +1750,7 @@ cheat gas (inOffset, inSize) (outOffset, outSize) xs = do
   input <- readMemory (Expr.add inOffset (Lit 4)) (Expr.sub inSize (Lit 4))
   calldata <- readMemory inOffset inSize
   abi <- readBytes 4 (Lit 0) <$> readMemory inOffset (Lit 4)
-  let newContext = CallContext cheatCode cheatCode outOffset outSize (Lit 0) (maybeLitWordSimp abi) calldata vm.env.contracts vm.tx.subState
+  let !newContext = CallContext cheatCode cheatCode outOffset outSize (Lit 0) (maybeLitWordSimp abi) calldata vm.env.contracts vm.tx.subState
 
   pushTrace $ FrameTrace newContext
   next
@@ -2124,7 +2124,7 @@ delegateCall this gasGiven xTo xContext xValue xInOffset xInSize xOutOffset xOut
                 burn' xGas $ do
                   calldata <- readMemory xInOffset xInSize
                   abi <- maybeLitWordSimp . readBytes 4 (Lit 0) <$> readMemory xInOffset (Lit 4)
-                  let newContext = CallContext
+                  let !newContext = CallContext
                                     { target    = xTo
                                     , context   = xContext
                                     , offset    = xOutOffset
@@ -2149,17 +2149,17 @@ delegateCall this gasGiven xTo xContext xValue xInOffset xInSize xOutOffset xOut
 
                   newMemory <- ConcreteMemory <$> VS.Mutable.new 0
                   zoom #state $ do
-                    assign #gas xGas
-                    assign #pc 0
-                    assign #code (clearInitCode target.code)
-                    assign #codeContract xTo
-                    assign #stack mempty
-                    assign #memory newMemory
-                    assign #memorySize 0
-                    assign #returndata mempty
-                    assign #calldata calldata
-                    assign #overrideCaller Nothing
-                    assign #resetCaller False
+                    assign' #gas xGas
+                    assign' #pc 0
+                    assign' #code (clearInitCode target.code)
+                    assign' #codeContract xTo
+                    assign' #stack mempty
+                    assign' #memory newMemory
+                    assign' #memorySize 0
+                    assign' #returndata mempty
+                    assign' #calldata calldata
+                    assign' #overrideCaller Nothing
+                    assign' #resetCaller False
                   continue xTo
 
 -- -- * Contract creation
@@ -2403,8 +2403,8 @@ finishFrame how = do
 
           let
             subState'' = over #touchedAccounts (maybe id cons (find (LitAddr 3 ==) touched)) subState'
-            revertContracts = assign (#env % #contracts) reversion
-            revertSubstate  = assign (#tx % #subState) subState''
+            revertContracts = assign' (#env % #contracts) reversion
+            revertSubstate  = assign' (#tx % #subState) subState''
 
           case how of
             -- Case 1: Returning from a call?
@@ -2583,28 +2583,29 @@ readMemory offset' size' = do
 withTraceLocation :: TraceData -> EVM t s Trace
 withTraceLocation x = do
   vm <- get
-  let this = fromJust $ currentContract vm
+  let !this = fromJust $ currentContract vm
+  let !opIx = fromMaybe 0 $ this.opIxMap VS.!? vm.state.pc
   pure Trace
     { tracedata = x
     , contract = this
-    , opIx = fromMaybe 0 $ this.opIxMap VS.!? vm.state.pc
+    , opIx = opIx
     }
 
 pushTrace :: TraceData -> EVM t s ()
 pushTrace x = do
   trace <- withTraceLocation x
-  modifying #traces $
+  modifying' #traces $
     \t -> Zipper.children $ Zipper.insert (Node trace []) t
 
 insertTrace :: TraceData -> EVM t s ()
 insertTrace x = do
   trace <- withTraceLocation x
-  modifying #traces $
+  modifying' #traces $
     \t -> Zipper.nextSpace $ Zipper.insert (Node trace []) t
 
 popTrace :: EVM t s ()
 popTrace =
-  modifying #traces $
+  modifying' #traces $
     \t -> case Zipper.parent t of
             Nothing -> internalError "internal internalError(trace root)"
             Just t' -> Zipper.nextSpace t'

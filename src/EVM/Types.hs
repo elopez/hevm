@@ -742,8 +742,8 @@ data FrameContext
   = CreationContext
     { address         :: Expr EAddr
     , codehash        :: Expr EWord
-    , createreversion :: Map (Expr EAddr) Contract
-    , subState        :: SubState
+    , createreversion :: !(Map (Expr EAddr) Contract)
+    , subState        :: !SubState
     }
   | CallContext
     { target        :: Expr EAddr
@@ -753,8 +753,8 @@ data FrameContext
     , codehash      :: Expr EWord
     , abi           :: Maybe W256
     , calldata      :: Expr Buf
-    , callreversion :: Map (Expr EAddr) Contract
-    , subState      :: SubState
+    , callreversion :: !(Map (Expr EAddr) Contract)
+    , subState      :: !SubState
     }
   deriving (Eq, Ord, Show, Generic)
 
