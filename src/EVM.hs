@@ -1523,8 +1523,15 @@ finalize = do
       -- deposit the code from a creation tx
       creation <- use (#tx % #isCreate)
       createe  <- use (#state % #contract)
-      createeExists <- (Map.member createe) <$> use (#env % #contracts)
-      when (creation && createeExists) $
+      createeContract <- preuse (#env % #contracts % ix createe)
+      -- Only replace code if this is a creation tx, the contract exists,
+      -- and it has InitCode (not RuntimeCode from a collision)
+      let shouldReplaceCode = creation && case createeContract of
+            Just c -> case c.code of
+              InitCode _ _ -> True
+              _ -> False  -- collision case: existing contract has RuntimeCode
+            Nothing -> False
+      when shouldReplaceCode $
         case output of
           ConcreteBuf bs -> replaceCode createe (RuntimeCode (ConcreteRuntimeCode bs))
           _ ->

@@ -1,6 +1,6 @@
 module EVM.Transaction where
 
-import EVM (initialContract, ceilDiv)
+import EVM (initialContract, ceilDiv, collision)
 import EVM.Expr qualified as Expr
 import EVM.FeeSchedule
 import EVM.Format (hexText)
@@ -306,13 +306,22 @@ initTx vm =
     preState = setupTx origin coinbase gasPrice gasLimit vm.env.contracts
     oldBalance = view (accountAt toAddr % #balance) preState
     creation = vm.tx.isCreate
-    initState =
-        ((Map.adjust (over #balance (`Expr.sub` value))) origin)
-      . (Map.adjust (over #balance (Expr.add value))) toAddr
-      . (if creation
-         then Map.insert toAddr (toContract & (set #balance oldBalance))
-         else touchAccount toAddr)
-      $ preState
+    -- Check for collision at target address for CREATE transactions
+    hasCollision = creation && collision (Map.lookup toAddr preState)
+    -- For collision: don't transfer value, don't create contract
+    initState = if hasCollision
+      then touchAccount toAddr preState
+      else ((Map.adjust (over #balance (`Expr.sub` value))) origin)
+         . (Map.adjust (over #balance (Expr.add value))) toAddr
+         . (if creation
+            then Map.insert toAddr (toContract & (set #balance oldBalance))
+            else touchAccount toAddr)
+         $ preState
   in
-    vm & #env % #contracts .~ initState
-       & #tx % #txReversion .~ preState
+    -- For collision: set immediate success to skip initcode execution
+    if hasCollision
+    then vm & #env % #contracts .~ initState
+            & #tx % #txReversion .~ preState
+            & #result .~ Just (VMSuccess mempty)
+    else vm & #env % #contracts .~ initState
+            & #tx % #txReversion .~ preState
