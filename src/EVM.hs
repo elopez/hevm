@@ -2203,14 +2203,21 @@ delegateCall this gasGiven xTo xContext xValue xInOffset xInSize xOutOffset xOut
 
 -- -- * Contract creation
 
--- EIP 684
+-- EIP-684 and EIP-7610: collision if nonce != 0, code is non-empty, or storage is non-empty
 collision :: Maybe Contract -> Bool
 collision c' = case c' of
-  Just c -> c.nonce /= Just 0 || case c.code of
+  Just c -> c.nonce /= Just 0 || not (isStorageEmpty c.storage) || case c.code of
     RuntimeCode (ConcreteRuntimeCode "") -> False
     RuntimeCode (SymbolicRuntimeCode b) -> not $ null b
     _ -> True
   Nothing -> False
+  where
+    isStorageEmpty :: Expr Storage -> Bool
+    isStorageEmpty = \case
+      ConcreteStore m -> Map.null m
+      AbstractStore _ _ -> False  -- conservatively assume non-empty
+      SStore _ _ _ -> False       -- has writes, so non-empty
+      GVar _ -> False             -- unknown, assume non-empty
 
 create :: forall t. (?op :: Word8, ?conf::Config, VMOps t)
   => Expr EAddr -> Contract
