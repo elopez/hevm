@@ -318,10 +318,11 @@ initTx vm =
             else touchAccount toAddr)
          $ preState
   in
-    -- For collision: set immediate success to skip initcode execution
+    -- For collision: set code to empty so exec1 immediately stops and calls finalize
+    -- (don't set #result directly, as that bypasses finalize which handles gas payment)
     if hasCollision
     then vm & #env % #contracts .~ initState
             & #tx % #txReversion .~ preState
-            & #result .~ Just (VMSuccess mempty)
+            & #state % #code .~ RuntimeCode (ConcreteRuntimeCode "")
     else vm & #env % #contracts .~ initState
             & #tx % #txReversion .~ preState
