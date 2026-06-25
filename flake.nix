@@ -34,7 +34,15 @@
       let
         pkgs = (import nixpkgs {
           inherit system;
-          overlays = [solc-pkgs.overlay];
+          overlays = [
+            solc-pkgs.overlay
+            # Make GHC 9.8 the default everywhere (including build-platform
+            # tooling used by pkgsMusl.pkgsStatic). Without this the static
+            # build pulls the default haskellPackages (a newer GHC) for
+            # Setup.hs/build-tools and ends up compiling a second GHC from
+            # source alongside the 9.8 one used for hevm.
+            (final: prev: { haskellPackages = final.haskell.packages.ghc98; })
+          ];
           config = { allowBroken = true; };
         });
         execution-spec-tests-fixtures = pkgs.stdenv.mkDerivation {
