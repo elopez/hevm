@@ -67,13 +67,8 @@
         }));
 
         hspkgs = ps :
-          ps.haskellPackages.override {
+          ps.haskell.packages.ghc98.override {
             overrides = hfinal: hprev: {
-              with-utf8 =
-                if (with ps.stdenv; hostPlatform.isDarwin && hostPlatform.isx86)
-                then ps.haskell.lib.compose.overrideCabal (_ : { extraLibraries = [ps.libiconv]; }) hprev.with-utf8
-                else hprev.with-utf8;
-              # TODO: temporary fix for static build which is still on 9.4
               witch = ps.haskell.lib.doJailbreak hprev.witch;
             };
           };
@@ -111,7 +106,7 @@
           codesign_allocate = "${pkgs.darwin.binutils.bintools}/bin/codesign_allocate";
           codesign = "${pkgs.darwin.sigtool}/bin/codesign";
         in if pkgs.stdenv.isLinux
-        then hlib.dontCheck (hevmBase pkgs.pkgsStatic)
+        then hlib.dontCheck (hevmBase pkgs.pkgsMusl.pkgsStatic)
         else pkgs.runCommand "stripNixRefs" {} ''
           mkdir -p $out/bin
           cp ${hlib.dontCheck (forceStaticDepsMacos (hevmBase pkgs))}/bin/hevm $out/bin/
@@ -119,16 +114,18 @@
           # get the list of dynamic libs from otool and tidy the output
           libs=$(${otool} -L $out/bin/hevm | tail -n +2 | sed 's/^[[:space:]]*//' | cut -d' ' -f1)
 
-          # get the paths for libcxx and libiconv
-          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*/libc++\.')
-          cxxabi=$(echo "$libs" | ${grep} '^/nix/store/.*/libc++abi\.')
-          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*/libiconv\.')
+          # get the paths for libcxx and libiconv. depending on the toolchain
+          # some of these may already point at /usr/lib, in which case there is
+          # nothing to rewrite.
+          cxx=$(echo "$libs" | ${grep} '^/nix/store/.*/libc++\.' || true)
+          cxxabi=$(echo "$libs" | ${grep} '^/nix/store/.*/libc++abi\.' || true)
+          iconv=$(echo "$libs" | ${grep} '^/nix/store/.*/libiconv\.' || true)
 
-          # rewrite /nix/... library paths to point to /usr/lib
+          # rewrite any /nix/... library paths to point to /usr/lib
           chmod 777 $out/bin/hevm
-          ${install_name_tool} -change "$cxx" /usr/lib/libc++.1.dylib $out/bin/hevm
-          ${install_name_tool} -change "$cxxabi" /usr/lib/libc++abi.dylib $out/bin/hevm
-          ${install_name_tool} -change "$iconv" /usr/lib/libiconv.dylib $out/bin/hevm
+          if [ -n "$cxx" ]; then ${install_name_tool} -change "$cxx" /usr/lib/libc++.1.dylib $out/bin/hevm; fi
+          if [ -n "$cxxabi" ]; then ${install_name_tool} -change "$cxxabi" /usr/lib/libc++abi.dylib $out/bin/hevm; fi
+          if [ -n "$iconv" ]; then ${install_name_tool} -change "$iconv" /usr/lib/libiconv.dylib $out/bin/hevm; fi
           # check that no nix deps remain
           nixdeps=$(${otool} -L $out/bin/hevm | tail -n +2 | { ${grep} /nix/store -c || test $? = 1; })
           if [ ! "$nixdeps" = "0" ]; then
